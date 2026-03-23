@@ -5,7 +5,7 @@ import {
   Search, Filter, CheckCircle2, XCircle,
   Download, Send, Loader2
 } from 'lucide-react';
-import { Voter } from '../types';
+import type { Voter } from '../types';
 
 const VoterManagement: React.FC<{ electionId: string }> = ({ electionId }) => {
   const [voters, setVoters] = useState<Voter[]>([]);

@@ -8,6 +8,7 @@ import VoterWelcome from './pages/VoterWelcome';
 import './index.css';
 
 function App() {
+  console.log('App.tsx: Rendering App component');
   return (
     <Router>
       <Layout>

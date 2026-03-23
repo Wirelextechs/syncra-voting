@@ -5,7 +5,7 @@ import {
   Image as ImageIcon, User, Save,
   LayoutGrid
 } from 'lucide-react';
-import { Category, Candidate } from '../types';
+import type { Category, Candidate } from '../types';
 
 const CategoryManagement: React.FC<{ electionId: string }> = ({ electionId }) => {
   const [categories, setCategories] = useState<Category[]>([]);

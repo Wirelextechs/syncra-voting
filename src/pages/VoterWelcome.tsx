@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
-import { Election } from '../types';
+import type { Election } from '../types';
 import { Vote, ArrowRight, ShieldCheck, Globe } from 'lucide-react';
 
 const VoterWelcome: React.FC = () => {
