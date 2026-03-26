@@ -124,7 +124,7 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
           </button>
           <style>{`@media(max-width:768px){ #mobile-menu-btn { display:flex !important; } }`}</style>
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.875rem' }}>
-            <Link to="/admin" style={{ color: 'var(--text-3)', fontWeight: 500, textDecoration: 'none', ':hover': { color: 'var(--text-1)' } }}>Admin</Link>
+            <Link to="/admin" style={{ color: 'var(--text-3)', fontWeight: 500, textDecoration: 'none' }}>Admin</Link>
             {breadcrumbLabel() && (
               <>
                 <ChevronRight size={13} style={{ color: 'var(--text-3)' }} />

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from '../lib/supabase';
 import { Plus, Trash2, User, LayoutGrid, X, Upload, Loader2, ImageIcon } from 'lucide-react';
 import type { Category, Candidate } from '../types';
@@ -233,7 +233,7 @@ const AddCandidateInline = ({ onAdd }: { onAdd: (name: string, file: File | null
     <div className="anim-fade-in" style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', padding: '0.875rem', borderRadius: 10, background: 'var(--surface-2)', border: '1px solid var(--border)', marginTop: 4 }}>
       <input className="input" style={{ fontSize: '0.875rem' }} placeholder="Candidate full name *" value={name} onChange={e => setName(e.target.value)} autoFocus />
       <div>
-        <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-2)', marginBottom: 6, display: 'flex', alignItems: 'center', gap: 6 }}>
+        <label style={{ display: 'flex', fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-2)', marginBottom: 6, alignItems: 'center', gap: 6 }}>
           <ImageIcon size={12} /> Photo (optional)
         </label>
         <PhotoPicker onFile={handleFile} preview={preview} />

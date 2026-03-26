@@ -100,7 +100,7 @@ const VotePage: React.FC = () => {
               <p style={{ fontWeight: 700, fontSize: '1rem', color: 'var(--text-1)' }}>{cat?.name}</p>
               <p style={{ fontSize: '0.8125rem', color: 'var(--text-2)', marginTop: 2 }}>Position {currentIndex + 1} of {categories.length}</p>
             </div>
-            <div style={{ display: 'flex', align: 'center', gap: 8 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               <span className="badge badge-violet">
                 <ShieldCheck size={12} /> Secure Ballot
               </span>
