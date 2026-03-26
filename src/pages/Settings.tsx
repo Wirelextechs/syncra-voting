@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { Bell, Shield, Save, CheckCheck, Globe, Lock, Server, ExternalLink } from 'lucide-react';
 
 const Section: React.FC<{ title: string; desc: string; icon: React.ReactNode; children: React.ReactNode }> = ({ title, desc, icon, children }) => (
