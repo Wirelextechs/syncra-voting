@@ -1,213 +1,229 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
-import { 
-  Users, UserPlus, Upload, Trash2, 
-  Search, Filter, CheckCircle2, XCircle,
-  Download, Send, Loader2
+import {
+  UserPlus, Upload, Trash2, Search,
+  CheckCircle2, XCircle, Send, Loader2, Users, X, Download
 } from 'lucide-react';
 import type { Voter } from '../types';
 
+/* ── Sample CSV template ── */
+const SAMPLE_CSV = `name,identifier,phone,class
+Kwame Mensah,UCC/2024/001,+233241234567,Level 300
+Abena Serwaa,UCC/2024/002,+233501234567,Level 200
+Kofi Asante,UCC/2024/003,+233271234567,Level 400
+Ama Owusu,UCC/2024/004,+233201234567,Level 100`;
+
+const downloadSampleCsv = () => {
+  const blob = new Blob([SAMPLE_CSV], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = 'syncra_voters_template.csv';
+  link.click();
+  URL.revokeObjectURL(url);
+};
+
+/* ─────────────────────────────────────────── Component ──── */
 const VoterManagement: React.FC<{ electionId: string }> = ({ electionId }) => {
   const [voters, setVoters] = useState<Voter[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
-  const [showAddModal, setShowAddModal] = useState(false);
-  const [newVoter, setNewVoter] = useState({
-    name: '',
-    identifier: '',
-    phone: '',
-    class: ''
-  });
+  const [showAdd, setShowAdd] = useState(false);
+  const [newVoter, setNewVoter] = useState({ name: '', identifier: '', phone: '', class: '' });
+  const [sending, setSending] = useState(false);
+  const [deleting, setDeleting] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (electionId) {
-      fetchVoters();
-    }
-  }, [electionId]);
+  useEffect(() => { if (electionId) fetchVoters(); }, [electionId]);
 
   const fetchVoters = async () => {
-    try {
-      const { data, error } = await supabase
-        .from('voters')
-        .select('*')
-        .eq('election_id', electionId)
-        .order('name');
-      
-      if (data) setVoters(data);
-    } catch (err) {
-      console.error('Error fetching voters:', err);
-    } finally {
-      setLoading(false);
-    }
+    const { data } = await supabase.from('voters').select('*').eq('election_id', electionId).order('name');
+    if (data) setVoters(data);
+    setLoading(false);
   };
 
-  const handleAddVoter = async (e: React.FormEvent) => {
+  const handleAdd = async (e: React.FormEvent) => {
     e.preventDefault();
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
-    try {
-      const { data, error } = await supabase
-        .from('voters')
-        .insert([{ 
-          ...newVoter, 
-          election_id: electionId, 
-          otp,
-          otp_sent: false 
-        }])
-        .select()
-        .single();
-      
-      if (data) {
-        setVoters([...voters, data]);
-        setNewVoter({ name: '', identifier: '', phone: '', class: '' });
-        setShowAddModal(false);
-      }
-    } catch (err) {
-      console.error('Error adding voter:', err);
+    const { data } = await supabase
+      .from('voters')
+      .insert([{ ...newVoter, election_id: electionId, otp, otp_sent: false }])
+      .select().single();
+    if (data) {
+      setVoters(p => [...p, data]);
+      setNewVoter({ name: '', identifier: '', phone: '', class: '' });
+      setShowAdd(false);
     }
   };
 
-  const handleCsvUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleDelete = async (id: string) => {
+    if (!window.confirm('Remove this voter? This cannot be undone.')) return;
+    setDeleting(id);
+    const { error } = await supabase.from('voters').delete().eq('id', id);
+    if (!error) setVoters(p => p.filter(v => v.id !== id));
+    setDeleting(null);
+  };
+
+  const handleCsv = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-
+    e.target.value = '';  // allow re-upload
     const reader = new FileReader();
-    reader.onload = async (event) => {
-      const text = event.target?.result as string;
-      const lines = text.split('\n').filter(line => line.trim() !== '');
+    reader.onload = async ev => {
+      const lines = (ev.target?.result as string).split('\n').filter(l => l.trim());
       const headers = lines[0].split(',').map(h => h.trim().toLowerCase());
-      
-      const newVoters = lines.slice(1).map(line => {
-        const values = line.split(',').map(v => v.trim());
-        const voter: any = { election_id: electionId, otp: Math.floor(100000 + Math.random() * 900000).toString(), otp_sent: false };
-        
-        headers.forEach((header, index) => {
-          if (header.includes('name')) voter.name = values[index];
-          if (header.includes('id') || header.includes('index') || header.includes('staff')) voter.identifier = values[index];
-          if (header.includes('phone')) voter.phone = values[index];
-          if (header.includes('class')) voter.class = values[index];
+      const batch = lines.slice(1).map(line => {
+        const vals = line.split(',').map(v => v.trim());
+        const v: any = { election_id: electionId, otp: Math.floor(100000 + Math.random() * 900000).toString(), otp_sent: false };
+        headers.forEach((h, i) => {
+          if (h.includes('name')) v.name = vals[i];
+          if (h.includes('id') || h.includes('index') || h.includes('staff')) v.identifier = vals[i];
+          if (h.includes('phone')) v.phone = vals[i];
+          if (h.includes('class')) v.class = vals[i];
         });
-        
-        return voter;
+        return v;
       }).filter(v => v.name && v.identifier);
-
-      if (newVoters.length > 0) {
-        const { data, error } = await supabase.from('voters').insert(newVoters).select();
-        if (data) setVoters([...voters, ...data]);
+      if (batch.length) {
+        const { data } = await supabase.from('voters').insert(batch).select();
+        if (data) setVoters(p => [...p, ...data]);
       }
     };
     reader.readAsText(file);
   };
 
-  const sendAllOtps = async () => {
-    setLoading(true);
-    // In a real system, you'd call an SMS API here.
-    // For this implementation, we mark them as sent and logs them.
-    const pendingVoters = voters.filter(v => !v.otp_sent);
-    console.log('Sending OTPs to:', pendingVoters.map(v => `${v.name}: ${v.otp}`));
-    
-    const { error } = await supabase
-      .from('voters')
-      .update({ otp_sent: true })
-      .eq('election_id', electionId)
-      .eq('otp_sent', false);
-    
-    if (!error) {
-      setVoters(voters.map(v => ({ ...v, otp_sent: true })));
-    }
-    setLoading(false);
+  const sendOtps = async () => {
+    setSending(true);
+    const { error } = await supabase.from('voters').update({ otp_sent: true }).eq('election_id', electionId).eq('otp_sent', false);
+    if (!error) setVoters(p => p.map(v => ({ ...v, otp_sent: true })));
+    setSending(false);
   };
 
-  const filteredVoters = voters.filter(v => 
+  const filtered = voters.filter(v =>
     v.name.toLowerCase().includes(search.toLowerCase()) ||
     v.identifier.toLowerCase().includes(search.toLowerCase())
   );
+  const voted = voters.filter(v => v.voted).length;
+  const otpSent = voters.filter(v => v.otp_sent).length;
 
   return (
-    <div className="space-y-6">
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-        <div className="relative w-full md:w-96">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-[#94a3b8] w-5 h-5" />
-          <input 
-            type="text"
-            placeholder="Search by name or ID..."
-            className="input-glass pl-12"
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-          />
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+
+      {/* Mini stats */}
+      <div className="stat-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '1rem' }}>
+        {[
+          { l: 'Registered', v: voters.length },
+          { l: 'OTPs Sent',  v: otpSent },
+          { l: 'Voted',      v: voted },
+          { l: 'Pending',    v: voters.length - voted },
+        ].map(s => (
+          <div key={s.l} className="card" style={{ padding: '1rem 1.25rem' }}>
+            <p style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-2)', marginBottom: 4, textTransform: 'uppercase', letterSpacing: '0.06em' }}>{s.l}</p>
+            <p style={{ fontWeight: 800, fontSize: '1.75rem', color: 'var(--text-1)', lineHeight: 1 }}>{s.v}</p>
+          </div>
+        ))}
+      </div>
+
+      {/* Toolbar */}
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.75rem', alignItems: 'center' }}>
+        <div style={{ position: 'relative', flex: '1 1 240px', minWidth: 0 }}>
+          <Search size={15} style={{ position: 'absolute', left: '0.75rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-3)', pointerEvents: 'none' }} />
+          <input className="input" placeholder="Search by name or ID…" style={{ paddingLeft: '2.375rem' }} value={search} onChange={e => setSearch(e.target.value)} />
         </div>
-        <div className="flex gap-3 w-full md:w-auto">
-          <button 
-            onClick={() => setShowAddModal(true)}
-            className="btn-primary flex-1 md:flex-none flex items-center justify-center gap-2"
-          >
-            <UserPlus className="w-5 h-5" />
-            Add Voter
+
+        <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
+          <button className="btn btn-primary btn-sm" onClick={() => setShowAdd(true)}>
+            <UserPlus size={14} /> Add Voter
           </button>
-          <label className="p-3 rounded-xl border border-white/10 hover:bg-white/5 transition-colors flex items-center justify-center gap-2 text-white cursor-pointer">
-            <Upload className="w-5 h-5" />
-            Import CSV
-            <input type="file" accept=".csv" className="hidden" onChange={handleCsvUpload} />
-          </label>
-          <button 
-            onClick={sendAllOtps}
-            disabled={voters.filter(v => !v.otp_sent).length === 0 || loading}
-            className="p-3 rounded-xl bg-[#6366f1]/20 border border-[#6366f1]/30 text-[#6366f1] hover:bg-[#6366f1]/30 transition-all flex items-center justify-center gap-2 font-bold disabled:opacity-30"
+
+          {/* CSV upload + sample download */}
+          <div style={{ display: 'flex', alignItems: 'center', border: '1px solid var(--border)', borderRadius: 10, overflow: 'hidden' }}>
+            <label className="btn btn-outline btn-sm" style={{ cursor: 'pointer', borderRadius: 0, border: 'none', borderRight: '1px solid var(--border)' }}>
+              <Upload size={14} style={{ color: 'var(--primary)' }} /> Upload CSV
+              <input type="file" accept=".csv" style={{ display: 'none' }} onChange={handleCsv} />
+            </label>
+            <button
+              className="btn btn-ghost btn-sm"
+              onClick={downloadSampleCsv}
+              title="Download sample CSV template"
+              style={{ borderRadius: 0, gap: 4 }}
+            >
+              <Download size={14} style={{ color: 'var(--secondary)' }} />
+              <span style={{ fontSize: '0.75rem', color: 'var(--text-2)' }}>Sample</span>
+            </button>
+          </div>
+
+          <button
+            className="btn btn-secondary btn-sm"
+            disabled={otpSent === voters.length || sending || loading || voters.length === 0}
+            onClick={sendOtps}
           >
-            {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : <Send className="w-5 h-5" />}
+            {sending ? <Loader2 size={14} className="anim-spin" /> : <Send size={14} />}
             Send OTPs
           </button>
         </div>
       </div>
 
-      <div className="glass-card overflow-hidden !p-0">
-        <div className="overflow-x-auto">
-          <table className="w-full text-left">
-            <thead className="bg-white/5 border-b border-white/10">
+      {/* CSV helper tip */}
+      <div style={{ padding: '0.75rem 1rem', borderRadius: 10, background: 'rgba(109,40,217,0.04)', border: '1px solid rgba(109,40,217,0.12)', display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.8125rem', color: 'var(--text-2)' }}>
+        <Download size={14} style={{ color: 'var(--secondary)', flexShrink: 0 }} />
+        <span>Download the <button onClick={downloadSampleCsv} style={{ background: 'none', border: 'none', color: 'var(--secondary)', fontWeight: 700, cursor: 'pointer', padding: 0, textDecoration: 'underline', fontSize: 'inherit' }}>sample CSV template</button>, fill it with voter data, and upload it directly. Share the template with institutions for easy onboarding.</span>
+      </div>
+
+      {/* Table */}
+      <div className="card" style={{ overflow: 'hidden' }}>
+        <div style={{ overflowX: 'auto' }}>
+          <table className="data-table">
+            <thead>
               <tr>
-                <th className="p-4 font-semibold text-white">Voter Details</th>
-                <th className="p-4 font-semibold text-white">ID / Index</th>
-                <th className="p-4 font-semibold text-white">Class</th>
-                <th className="p-4 font-semibold text-white">OTP Status</th>
-                <th className="p-4 font-semibold text-white">Voted</th>
-                <th className="p-4 font-semibold text-white text-right">Actions</th>
+                <th>Voter</th>
+                <th>ID / Index</th>
+                <th className="hide-mobile">Class</th>
+                <th>OTP</th>
+                <th>Voted</th>
+                <th style={{ textAlign: 'right' }}>Delete</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-white/5 text-white">
-              {filteredVoters.map(voter => (
-                <tr key={voter.id} className="hover:bg-white/2 transition-colors">
-                  <td className="p-4">
-                    <div className="flex flex-col">
-                      <span className="font-medium">{voter.name}</span>
-                      <span className="text-xs text-[#94a3b8]">{voter.phone || 'No phone'}</span>
+            <tbody>
+              {filtered.map(voter => (
+                <tr key={voter.id}>
+                  <td>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                      <div className="icon-box icon-box-sm ib-violet" style={{ flexShrink: 0 }}><Users size={14} /></div>
+                      <div>
+                        <p style={{ fontWeight: 600, color: 'var(--text-1)', lineHeight: 1.2 }}>{voter.name}</p>
+                        <p style={{ fontSize: '0.75rem', color: 'var(--text-3)' }}>{voter.phone || 'No phone'}</p>
+                      </div>
                     </div>
                   </td>
-                  <td className="p-4 font-mono text-sm">{voter.identifier}</td>
-                  <td className="p-4 text-sm">{voter.class || 'N/A'}</td>
-                  <td className="p-4">
-                    <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${
-                      voter.otp_sent ? 'bg-green-500/20 text-green-400' : 'bg-yellow-500/20 text-yellow-400'
-                    }`}>
+                  <td style={{ fontFamily: 'monospace', fontSize: '0.8125rem', color: 'var(--text-2)' }}>{voter.identifier}</td>
+                  <td className="hide-mobile" style={{ color: 'var(--text-2)', fontSize: '0.8125rem' }}>{voter.class || '—'}</td>
+                  <td>
+                    <span className={`badge ${voter.otp_sent ? 'badge-green' : 'badge-yellow'}`}>
                       {voter.otp_sent ? 'Sent' : 'Pending'}
                     </span>
                   </td>
-                  <td className="p-4">
-                    {voter.voted ? (
-                      <CheckCircle2 className="w-5 h-5 text-green-400" />
-                    ) : (
-                      <XCircle className="w-5 h-5 text-[#94a3b8]" />
-                    )}
+                  <td>
+                    {voter.voted
+                      ? <CheckCircle2 size={18} style={{ color: '#16a34a' }} />
+                      : <XCircle size={18} style={{ color: 'var(--border)' }} />}
                   </td>
-                  <td className="p-4 text-right">
-                    <button className="p-2 hover:bg-red-500/20 rounded-lg text-red-400 transition-colors">
-                      <Trash2 className="w-4 h-4" />
+                  <td style={{ textAlign: 'right' }}>
+                    <button
+                      className="btn btn-icon btn-danger-ghost btn-sm"
+                      disabled={deleting === voter.id}
+                      onClick={() => handleDelete(voter.id)}
+                      title="Delete voter"
+                    >
+                      {deleting === voter.id
+                        ? <Loader2 size={13} className="anim-spin" />
+                        : <Trash2 size={13} />}
                     </button>
                   </td>
                 </tr>
               ))}
-              {filteredVoters.length === 0 && !loading && (
+              {filtered.length === 0 && !loading && (
                 <tr>
-                  <td colSpan={6} className="p-12 text-center text-[#94a3b8]">
-                    No voters found matching your search.
+                  <td colSpan={6} style={{ textAlign: 'center', padding: '3rem', color: 'var(--text-3)' }}>
+                    {search ? `No voters match "${search}"` : 'No voters registered. Use Upload CSV or Add Voter to get started.'}
                   </td>
                 </tr>
               )}
@@ -216,65 +232,42 @@ const VoterManagement: React.FC<{ electionId: string }> = ({ electionId }) => {
         </div>
       </div>
 
-      {showAddModal && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
-          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setShowAddModal(false)} />
-          <div className="glass-card w-full max-w-md relative z-110">
-            <h2 className="text-2xl font-bold mb-6 text-white bg-gradient-to-r from-white to-gray-400 bg-clip-text text-transparent">Add New Voter</h2>
-            <form onSubmit={handleAddVoter} className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
-                <div className="col-span-2">
-                  <label className="block text-sm font-medium mb-1.5 ml-1 text-white">Full Name</label>
-                  <input 
-                    type="text" 
-                    className="input-glass"
-                    value={newVoter.name}
-                    onChange={e => setNewVoter({...newVoter, name: e.target.value})}
-                    required
-                  />
-                </div>
+      {/* Add Modal */}
+      {showAdd && (
+        <div className="modal-overlay" onClick={() => setShowAdd(false)}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                <div className="icon-box icon-box-md ib-orange-filled"><UserPlus size={18} /></div>
                 <div>
-                  <label className="block text-sm font-medium mb-1.5 ml-1 text-white">Identifier (ID/Index)</label>
-                  <input 
-                    type="text" 
-                    className="input-glass"
-                    value={newVoter.identifier}
-                    onChange={e => setNewVoter({...newVoter, identifier: e.target.value})}
-                    required
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium mb-1.5 ml-1 text-white">Class (Optional)</label>
-                  <input 
-                    type="text" 
-                    className="input-glass"
-                    value={newVoter.class}
-                    onChange={e => setNewVoter({...newVoter, class: e.target.value})}
-                  />
-                </div>
-                <div className="col-span-2">
-                  <label className="block text-sm font-medium mb-1.5 ml-1 text-white">Phone Number</label>
-                  <input 
-                    type="tel" 
-                    className="input-glass"
-                    placeholder="+233..."
-                    value={newVoter.phone}
-                    onChange={e => setNewVoter({...newVoter, phone: e.target.value})}
-                    required
-                  />
+                  <h2 style={{ fontWeight: 700, fontSize: '1.125rem', color: 'var(--text-1)' }}>Add Voter</h2>
+                  <p style={{ fontSize: '0.8125rem', color: 'var(--text-2)' }}>Register a new voter manually</p>
                 </div>
               </div>
-              <div className="flex gap-3 pt-6">
-                <button 
-                  type="button"
-                  onClick={() => setShowAddModal(false)}
-                  className="flex-1 p-3 rounded-xl border border-white/10 hover:bg-white/5 transition-colors text-white"
-                >
-                  Cancel
-                </button>
-                <button type="submit" className="flex-1 btn-primary">
-                  Add Voter
-                </button>
+              <button className="btn btn-icon btn-ghost" onClick={() => setShowAdd(false)}><X size={18} /></button>
+            </div>
+            <form onSubmit={handleAdd}>
+              <div className="modal-body" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+                <div style={{ gridColumn: '1 / -1' }}>
+                  <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 600, color: 'var(--text-2)', marginBottom: 6 }}>Full Name *</label>
+                  <input className="input" placeholder="e.g. Kwame Mensah" value={newVoter.name} onChange={e => setNewVoter({ ...newVoter, name: e.target.value })} required />
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 600, color: 'var(--text-2)', marginBottom: 6 }}>ID / Index *</label>
+                  <input className="input" placeholder="UCC/2024/001" value={newVoter.identifier} onChange={e => setNewVoter({ ...newVoter, identifier: e.target.value })} required />
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 600, color: 'var(--text-2)', marginBottom: 6 }}>Class</label>
+                  <input className="input" placeholder="e.g. Level 300" value={newVoter.class} onChange={e => setNewVoter({ ...newVoter, class: e.target.value })} />
+                </div>
+                <div style={{ gridColumn: '1 / -1' }}>
+                  <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 600, color: 'var(--text-2)', marginBottom: 6 }}>Phone Number *</label>
+                  <input className="input" type="tel" placeholder="+233 24 000 0000" value={newVoter.phone} onChange={e => setNewVoter({ ...newVoter, phone: e.target.value })} required />
+                </div>
+              </div>
+              <div className="modal-footer">
+                <button type="button" className="btn btn-outline btn-full" onClick={() => setShowAdd(false)}>Cancel</button>
+                <button type="submit" className="btn btn-primary btn-full"><UserPlus size={15} /> Add Voter</button>
               </div>
             </form>
           </div>

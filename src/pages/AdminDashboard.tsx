@@ -1,321 +1,468 @@
 import React, { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
-import { 
-  Plus, Users, Vote, Clock, 
-  BarChart3, Settings, Play, Square,
-  PlusCircle, LayoutGrid
+import {
+  Plus, Users, Vote, Clock, LayoutGrid, Search,
+  Building2, Calendar, ChevronRight, BarChart3,
+  Settings, Play, Square, TrendingUp, Share2,
+  Copy, CheckCheck, Zap, PlusCircle, X
 } from 'lucide-react';
 import type { Election } from '../types';
-import { 
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, 
-  Tooltip, ResponsiveContainer, Cell 
+import {
+  BarChart, Bar, XAxis, YAxis, CartesianGrid,
+  Tooltip, ResponsiveContainer, Cell
 } from 'recharts';
 import VoterManagement from './VoterManagement';
 import CategoryManagement from './CategoryManagement';
 
+const CHART_COLORS = ['#6d28d9', '#f97316', '#ec4899', '#0ea5e9', '#16a34a'];
+const MOCK_DATA = [
+  { name: 'Candidate A', votes: 420 },
+  { name: 'Candidate B', votes: 310 },
+  { name: 'Candidate C', votes: 180 },
+  { name: 'Candidate D', votes: 95 },
+];
+
+/* ══════════════════════════════════════════════════════════ */
 const AdminDashboard: React.FC = () => {
   const [elections, setElections] = useState<Election[]>([]);
   const [activeElection, setActiveElection] = useState<Election | null>(null);
   const [loading, setLoading] = useState(true);
-  const [showCreateModal, setShowCreateModal] = useState(false);
+  const [showModal, setShowModal] = useState(false);
   const [newElection, setNewElection] = useState({ title: '', institution: '' });
-  const [activeTab, setActiveTab] = useState<'overview' | 'voters' | 'categories'>('overview');
-  const [timeLeft, setTimeLeft] = useState<string>('00:00:00');
-  const [stats, setStats] = useState({ totalVoters: 0, votedCount: 0, otpSentCount: 0 });
+  const [activeTab, setActiveTab] = useState<'elections' | 'overview' | 'voters' | 'positions'>('elections');
+  const [timeLeft, setTimeLeft] = useState('--:--:--');
+  const [search, setSearch] = useState('');
+  const [stats, setStats] = useState({ total: 0, voted: 0, sent: 0 });
   const [chartData, setChartData] = useState<any[]>([]);
+  const [copied, setCopied] = useState(false);
+  // Election time config
+  const toLocalDatetimeValue = (offset: number = 0) => {
+    const d = new Date(Date.now() + offset);
+    d.setSeconds(0, 0);
+    return d.toISOString().slice(0, 16);
+  };
+  const [startTime, setStartTime] = useState(toLocalDatetimeValue());
+  const [endTime, setEndTime] = useState(toLocalDatetimeValue(8 * 60 * 60 * 1000));
+
+  useEffect(() => { fetchElections(); }, []);
 
   useEffect(() => {
-    fetchElections();
-  }, []);
+    if (!activeElection) return;
+    fetchStats();
+    fetchChartData();
 
-  useEffect(() => {
-    if (activeElection) {
-      fetchStats();
-      fetchChartData();
-      
-      const voterSub = supabase
-        .channel('voters_realtime')
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'voters', filter: `election_id=eq.${activeElection.id}` }, () => fetchStats())
-        .subscribe();
-      
-      const candidateSub = supabase
-        .channel('candidates_realtime')
-        .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'candidates' }, () => fetchChartData())
-        .subscribe();
+    const voterSub = supabase.channel('v_rt')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'voters', filter: `election_id=eq.${activeElection.id}` }, fetchStats)
+      .subscribe();
+    const candSub = supabase.channel('c_rt')
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'candidates' }, fetchChartData)
+      .subscribe();
 
-      const timer = setInterval(() => {
-        if (activeElection.end_time) {
-          const distance = new Date(activeElection.end_time).getTime() - new Date().getTime();
-          if (distance < 0) {
-            setTimeLeft('EXPIRED');
-          } else {
-            const h = Math.floor((distance % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
-            const m = Math.floor((distance % (1000 * 60 * 60)) / (1000 * 60));
-            const s = Math.floor((distance % (1000 * 60)) / 1000);
-            setTimeLeft(`${h}h ${m}m ${s}s`);
-          }
-        }
+    let timer: ReturnType<typeof setInterval>;
+    if (activeElection.end_time) {
+      timer = setInterval(() => {
+        const dist = new Date(activeElection.end_time!).getTime() - Date.now();
+        if (dist < 0) { setTimeLeft('Ended'); return; }
+        const h = Math.floor(dist / 3600000);
+        const m = Math.floor((dist % 3600000) / 60000);
+        const s = Math.floor((dist % 60000) / 1000);
+        setTimeLeft(`${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`);
       }, 1000);
-
-      return () => {
-        supabase.removeChannel(voterSub);
-        supabase.removeChannel(candidateSub);
-        clearInterval(timer);
-      };
     }
+
+    return () => {
+      supabase.removeChannel(voterSub);
+      supabase.removeChannel(candSub);
+      clearInterval(timer);
+    };
   }, [activeElection]);
+
+  const fetchElections = async () => {
+    const { data } = await supabase.from('elections').select('*').order('created_at', { ascending: false });
+    if (data) setElections(data);
+    setLoading(false);
+  };
 
   const fetchStats = async () => {
     if (!activeElection) return;
-    const { count: total } = await supabase.from('voters').select('*', { count: 'exact', head: true }).eq('election_id', activeElection.id);
-    const { count: voted } = await supabase.from('voters').select('*', { count: 'exact', head: true }).eq('election_id', activeElection.id).eq('voted', true);
-    const { count: sent } = await supabase.from('voters').select('*', { count: 'exact', head: true }).eq('election_id', activeElection.id).eq('otp_sent', true);
-    setStats({ totalVoters: total || 0, votedCount: voted || 0, otpSentCount: sent || 0 });
+    const id = activeElection.id;
+    const [{ count: total }, { count: voted }, { count: sent }] = await Promise.all([
+      supabase.from('voters').select('*', { count: 'exact', head: true }).eq('election_id', id),
+      supabase.from('voters').select('*', { count: 'exact', head: true }).eq('election_id', id).eq('voted', true),
+      supabase.from('voters').select('*', { count: 'exact', head: true }).eq('election_id', id).eq('otp_sent', true),
+    ]);
+    setStats({ total: total || 0, voted: voted || 0, sent: sent || 0 });
   };
 
   const fetchChartData = async () => {
     if (!activeElection) return;
-    const { data: categories } = await supabase.from('categories').select('id, name').eq('election_id', activeElection.id);
-    if (!categories || categories.length === 0) return;
-    
-    // For simplicity, we just show the first category's candidates in the main chart
-    const { data: candidates } = await supabase.from('candidates').select('name, votes_count').eq('category_id', categories[0].id);
-    if (candidates) {
-      setChartData(candidates.map((c: any) => ({ name: c.name, votes: c.votes_count })));
-    }
+    const { data: cats } = await supabase.from('categories').select('id').eq('election_id', activeElection.id);
+    if (!cats?.length) return;
+    const { data: cands } = await supabase.from('candidates').select('name, votes_count').eq('category_id', cats[0].id);
+    if (cands) setChartData(cands.map((c: any) => ({ name: c.name, votes: c.votes_count || 0 })));
   };
 
-  const updateElectionStatus = async (status: 'open' | 'closed', endOffsetMinutes?: number) => {
+  const updateStatus = async (status: 'open' | 'closed', startIso?: string, endIso?: string) => {
     if (!activeElection) return;
     const updates: any = { status };
-    if (endOffsetMinutes) {
-      updates.end_time = new Date(Date.now() + endOffsetMinutes * 60000).toISOString();
-    } else if (status === 'closed') {
+    if (status === 'open') {
+      updates.start_time = startIso || new Date().toISOString();
+      updates.end_time   = endIso   || null;
+    } else {
       updates.end_time = new Date().toISOString();
     }
-
-    const { data, error } = await supabase.from('elections').update(updates).eq('id', activeElection.id).select().single();
-    if (data) setActiveElection(data);
+    const { data } = await supabase.from('elections').update(updates).eq('id', activeElection.id).select().single();
+    if (data) { setActiveElection(data); setElections(prev => prev.map(e => e.id === data.id ? data : e)); }
   };
 
-  const fetchElections = async () => {
-    try {
-      const { data, error } = await supabase
-        .from('elections')
-        .select('*')
-        .order('created_at', { ascending: false });
-      
-      if (data) {
-        setElections(data);
-        if (data.length > 0 && !activeElection) {
-          setActiveElection(data[0]);
-        }
-      }
-    } catch (err) {
-      console.error('Error fetching elections:', err);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleCreateElection = async (e: React.FormEvent) => {
+  const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
-    try {
-      const { data, error } = await supabase
-        .from('elections')
-        .insert([newElection])
-        .select()
-        .single();
-      
-      if (data) {
-        setElections([data, ...elections]);
-        setActiveElection(data);
-        setShowCreateModal(false);
-        setNewElection({ title: '', institution: '' });
-      }
-    } catch (err) {
-      console.error('Error creating election:', err);
+    const { data } = await supabase.from('elections').insert([newElection]).select().single();
+    if (data) {
+      setElections(prev => [data, ...prev]);
+      setActiveElection(data);
+      setActiveTab('overview');
+      setShowModal(false);
+      setNewElection({ title: '', institution: '' });
     }
   };
 
-  if (loading) {
-    return <div className="flex justify-center items-center h-64 text-white">Loading Syncra Dashboard...</div>;
-  }
+  const copyLink = () => {
+    if (!activeElection) return;
+    navigator.clipboard.writeText(`${window.location.origin}/e/${activeElection.id}`);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
 
+  const filtered = elections.filter(e =>
+    e.title.toLowerCase().includes(search.toLowerCase()) ||
+    e.institution.toLowerCase().includes(search.toLowerCase())
+  );
+
+  const turnout = stats.total > 0 ? Math.round((stats.voted / stats.total) * 100) : 0;
+
+  /* ── Loading ── */
+  if (loading) return (
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '60vh', flexDirection: 'column', gap: 16 }}>
+      <div className="anim-spin" style={{ width: 36, height: 36, borderRadius: '50%', border: '3px solid var(--border)', borderTopColor: 'var(--primary)' }} />
+      <p style={{ color: 'var(--text-2)', fontSize: '0.9375rem' }}>Loading dashboard…</p>
+    </div>
+  );
+
+  /* ── Render ── */
   return (
-    <div className="space-y-8 animate-fade-in">
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-6">
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '1.75rem' }}>
+
+      {/* ── Page Header ── */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '1rem' }}>
         <div>
-          <h1 className="text-4xl font-bold bg-gradient-to-r from-white to-gray-400 bg-clip-text text-transparent">
-            {activeElection ? activeElection.title : 'Admin Console'}
+          <h1 style={{ fontSize: 'clamp(1.375rem, 3vw, 1.75rem)', fontWeight: 800, color: 'var(--text-1)', lineHeight: 1.2 }}>
+            {activeTab === 'elections'
+              ? 'Elections Hub'
+              : activeElection?.title || 'Dashboard'}
           </h1>
-          <p className="text-[#94a3b8] mt-1">
-            {activeElection ? activeElection.institution : 'Manage your elections and real-time results.'}
+          <p style={{ color: 'var(--text-2)', fontSize: '0.9375rem', marginTop: 4 }}>
+            {activeTab === 'elections'
+              ? `${elections.length} election${elections.length !== 1 ? 's' : ''} total`
+              : activeElection?.institution || ''}
           </p>
         </div>
-        <div className="flex gap-4 w-full md:w-auto">
-          <select 
-            className="input-glass bg-white/5 border-white/10 text-sm py-2 px-4 h-fit flex-1 md:flex-none text-white appearance-none"
-            style={{ backgroundImage: 'url("data:image/svg+xml,%3Csvg xmlns=\'http://www.w3.org/2000/svg\' fill=\'none\' viewBox=\'0 0 24 24\' stroke=\'%2394a3b8\'%3E%3Cpath stroke-linecap=\'round\' stroke-linejoin=\'round\' stroke-width=\'2\' d=\'M19 9l-7 7-7-7\' /%3E%3C/svg%3E")', backgroundRepeat: 'no-repeat', backgroundPosition: 'right 0.75rem center', backgroundSize: '1rem' }}
-            onChange={(e) => setActiveElection(elections.find(ev => ev.id === e.target.value) || null)}
-            value={activeElection?.id || ''}
-          >
-            {elections.map(e => <option key={e.id} value={e.id} className="bg-slate-900">{e.title}</option>)}
-          </select>
-          <button 
-            onClick={() => setShowCreateModal(true)}
-            className="btn-primary flex items-center justify-center gap-2 whitespace-nowrap"
-          >
-            <Plus className="w-5 h-5" />
-            New Election
+        <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
+          {activeElection && activeTab !== 'elections' && (
+            <select
+              className="input"
+              style={{ width: 'auto', minWidth: 180, height: 38, padding: '0 0.75rem', fontSize: '0.875rem' }}
+              value={activeElection?.id}
+              onChange={e => {
+                const sel = elections.find(el => el.id === e.target.value);
+                if (sel) { setActiveElection(sel); setActiveTab('overview'); }
+              }}
+            >
+              {elections.map(el => <option key={el.id} value={el.id}>{el.title}</option>)}
+            </select>
+          )}
+          <button className="btn btn-primary" onClick={() => setShowModal(true)}>
+            <PlusCircle size={16} /> New Election
           </button>
         </div>
       </div>
 
-      {activeElection ? (
-        <>
-          <div className="flex gap-2 p-1 bg-white/5 rounded-2xl w-fit border border-white/10">
-            <TabButton active={activeTab === 'overview'} onClick={() => setActiveTab('overview')} label="Overview" icon={<BarChart3 className="w-4 h-4" />} />
-            <TabButton active={activeTab === 'voters'} onClick={() => setActiveTab('voters')} label="Electorate" icon={<Users className="w-4 h-4" />} />
-            <TabButton active={activeTab === 'categories'} onClick={() => setActiveTab('categories')} label="Categories" icon={<LayoutGrid className="w-4 h-4" />} />
+      {/* ── Tab Bar ── */}
+      <div style={{ overflowX: 'auto' }}>
+        <div className="tab-list" style={{ width: 'fit-content', borderRadius: 10 }}>
+          <button className={`tab-btn ${activeTab === 'elections' ? 'active' : ''}`}
+            onClick={() => { setActiveTab('elections'); setActiveElection(null); }}>
+            <LayoutGrid size={14} /> All Elections
+          </button>
+          {activeElection && <>
+            <button className={`tab-btn ${activeTab === 'overview' ? 'active' : ''}`} onClick={() => setActiveTab('overview')}>
+              <BarChart3 size={14} /> Overview
+            </button>
+            <button className={`tab-btn ${activeTab === 'voters' ? 'active' : ''}`} onClick={() => setActiveTab('voters')}>
+              <Users size={14} /> Voters
+            </button>
+            <button className={`tab-btn ${activeTab === 'positions' ? 'active' : ''}`} onClick={() => setActiveTab('positions')}>
+              <LayoutGrid size={14} /> Positions
+            </button>
+          </>}
+        </div>
+      </div>
+
+      {/* ═══════════════════ ELECTIONS HUB ═══════════════════ */}
+      {activeTab === 'elections' && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+          {/* Search */}
+          <div style={{ position: 'relative', maxWidth: 480 }}>
+            <Search size={16} style={{ position: 'absolute', left: '0.875rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-3)', pointerEvents: 'none' }} />
+            <input className="input" placeholder="Search elections…" style={{ paddingLeft: '2.5rem' }} value={search} onChange={e => setSearch(e.target.value)} />
           </div>
 
-          <div className="mt-8 transition-all">
-            {activeTab === 'overview' && (
-              <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-                <div className="lg:col-span-2 space-y-8">
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                    <StatCard icon={<Users className="text-blue-400" />} label="Total Voters" value={stats.totalVoters.toString()} trend={`${stats.otpSentCount} OTPs sent`} />
-                    <StatCard icon={<Vote className="text-green-400" />} label="Votes Cast" value={stats.votedCount.toString()} trend={`${stats.totalVoters > 0 ? Math.round((stats.votedCount / stats.totalVoters) * 100) : 0}% Turnout`} />
-                    <StatCard icon={<Clock className="text-purple-400" />} label="Time Left" value={timeLeft} trend={activeElection.status === 'open' ? 'Live' : 'Stopped'} />
-                  </div>
-
-                  <div className="glass-card p-6 min-h-[400px]">
-                    <div className="flex justify-between items-center mb-6">
-                      <h2 className="text-xl font-semibold text-white">Live Results</h2>
-                      <BarChart3 className="text-[#6366f1] w-5 h-5" />
-                    </div>
-                    <div className="h-[300px] w-full">
-                      <ResponsiveContainer width="100%" height="100%">
-                        <BarChart data={chartData.length > 0 ? chartData : mockChartData}>
-                          <CartesianGrid strokeDasharray="3 3" stroke="#ffffff10" vertical={false} />
-                          <XAxis dataKey="name" stroke="#94a3b8" />
-                          <YAxis stroke="#94a3b8" />
-                          <Tooltip 
-                            contentStyle={{ background: '#1e293b', border: '1px solid #ffffff10', borderRadius: '12px' }}
-                            itemStyle={{ color: '#fff' }}
-                          />
-                          <Bar dataKey="votes" radius={[4, 4, 0, 0]}>
-                            {(chartData.length > 0 ? chartData : mockChartData).map((_, index) => (
-                              <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                            ))}
-                          </Bar>
-                        </BarChart>
-                      </ResponsiveContainer>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="space-y-6">
-                  <div className="glass-card p-6">
-                    <h3 className="text-lg font-semibold mb-4 flex items-center gap-2 text-white">
-                      <Settings className="w-5 h-5" />
-                      Election Control
-                    </h3>
-                    <div className="space-y-4">
-                      <div className="flex items-center justify-between p-4 rounded-2xl bg-white/5 border border-white/10">
-                        <span className="text-sm font-medium text-white">Status</span>
-                        <span className="px-3 py-1 bg-green-500/20 text-green-400 rounded-full text-[10px] font-bold uppercase tracking-wider">
-                          {activeElection.status}
-                        </span>
-                      </div>
-                      {activeElection.status !== 'open' ? (
-                        <div className="flex flex-col gap-2">
-                          <p className="text-[10px] text-[#94a3b8] ml-1 uppercase font-bold tracking-widest">Set Duration (Minutes)</p>
-                          <div className="flex gap-2">
-                            <button onClick={() => updateElectionStatus('open', 60)} className="flex-1 btn-primary text-xs py-3">1 Hour</button>
-                            <button onClick={() => updateElectionStatus('open', 1440)} className="flex-1 btn-primary text-xs py-3">24 Hours</button>
-                          </div>
-                          <button onClick={() => updateElectionStatus('open', 5)} className="w-full btn-primary bg-green-500/20 text-green-400 border border-green-500/30 hover:bg-green-500/30 flex items-center justify-center gap-2 py-3 mt-1 text-xs">
-                          <Play className="w-4 h-4" /> Custom Start (5m)
-                        </button>
-                        </div>
-                      ) : (
-                        <button 
-                          onClick={() => updateElectionStatus('closed')}
-                          className="w-full py-4 rounded-2xl border border-red-500/30 text-red-500 hover:bg-red-500/10 transition-all flex items-center justify-center gap-2 font-bold text-sm"
-                        >
-                          <Square className="w-4 h-4" /> Override: Stop Now
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                  
-                  <div className="glass-card p-6">
-                    <h3 className="text-lg font-semibold mb-2 text-white">Voter Link</h3>
-                    <p className="text-xs text-[#94a3b8] mb-4">Share this link with your electorate.</p>
-                    <div className="p-3 bg-white/5 rounded-xl border border-white/10 flex items-center justify-between gap-2">
-                      <span className="text-xs font-mono text-white overflow-hidden text-ellipsis whitespace-nowrap">
-                        {window.location.origin}/e/{activeElection.id}
-                      </span>
-                      <button 
-                        onClick={() => {
-                          navigator.clipboard.writeText(`${window.location.origin}/e/${activeElection.id}`);
-                          alert('Link copied to clipboard!');
-                        }}
-                        className="text-xs font-bold text-[#6366f1] hover:text-[#8b5cf6] transition-colors whitespace-nowrap"
-                      >
-                        Copy
-                      </button>
-                    </div>
-                  </div>
-                </div>
+          {/* Grid */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '1rem' }}>
+            {filtered.map((el, i) => (
+              <ElectionCard key={el.id} election={el} delay={i} onClick={() => { setActiveElection(el); setActiveTab('overview'); }} />
+            ))}
+            {/* Create card */}
+            <div
+              onClick={() => setShowModal(true)}
+              style={{
+                border: '2px dashed var(--border)',
+                borderRadius: 20,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                flexDirection: 'column',
+                gap: 12,
+                minHeight: 180,
+                cursor: 'pointer',
+                padding: '2rem',
+                transition: 'all 0.2s',
+                color: 'var(--text-3)',
+              }}
+              className="card-hover"
+              onMouseEnter={e => { (e.currentTarget as HTMLElement).style.borderColor = 'var(--primary)'; (e.currentTarget as HTMLElement).style.color = 'var(--primary)'; }}
+              onMouseLeave={e => { (e.currentTarget as HTMLElement).style.borderColor = 'var(--border)'; (e.currentTarget as HTMLElement).style.color = 'var(--text-3)'; }}
+            >
+              <div className="icon-box icon-box-md" style={{ background: 'var(--surface-2)', color: 'inherit', borderRadius: 12 }}>
+                <Plus size={20} />
               </div>
-            )}
-            {activeTab === 'voters' && <VoterManagement electionId={activeElection.id} />}
-            {activeTab === 'categories' && <CategoryManagement electionId={activeElection.id} />}
+              <div style={{ textAlign: 'center' }}>
+                <p style={{ fontWeight: 600, fontSize: '0.9375rem', color: 'inherit' }}>Create Election</p>
+                <p style={{ fontSize: '0.8125rem', color: 'var(--text-3)', marginTop: 2 }}>Set up a new ballot</p>
+              </div>
+            </div>
           </div>
-        </>
-      ) : (
-        <div className="glass-card text-center py-24">
-          <Vote className="w-16 h-16 text-[#94a3b8] mx-auto mb-4 opacity-10" />
-          <h2 className="text-2xl font-bold mb-2 text-white">No Elections Configured</h2>
-          <p className="text-[#94a3b8] mb-8 max-w-sm mx-auto">Create your first election to begin managing your institution's voting process.</p>
-          <button onClick={() => setShowCreateModal(true)} className="btn-primary px-8">Create New Election</button>
+
+          {filtered.length === 0 && elections.length > 0 && (
+            <div style={{ textAlign: 'center', padding: '3rem', color: 'var(--text-2)' }}>No results for "{search}"</div>
+          )}
+          {elections.length === 0 && (
+            <div className="card" style={{ textAlign: 'center', padding: '4rem 2rem' }}>
+              <div className="icon-box icon-box-xl ib-orange-filled" style={{ margin: '0 auto 1.5rem' }}>
+                <Vote size={28} />
+              </div>
+              <h2 style={{ fontWeight: 700, fontSize: '1.375rem', marginBottom: 8 }}>No elections yet</h2>
+              <p style={{ color: 'var(--text-2)', marginBottom: '2rem' }}>Create your first election to get started.</p>
+              <button className="btn btn-primary btn-lg" onClick={() => setShowModal(true)}>
+                <PlusCircle size={18} /> Create First Election
+              </button>
+            </div>
+          )}
         </div>
       )}
 
-      {showCreateModal && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
-          <div className="absolute inset-0 bg-black/80 backdrop-blur-md" onClick={() => setShowCreateModal(false)} />
-          <div className="glass-card w-full max-w-md relative z-110 p-8">
-            <h2 className="text-3xl font-bold mb-6 text-white text-gradient">Start New Election</h2>
-            <form onSubmit={handleCreateElection} className="space-y-6">
+      {/* ═══════════════════ OVERVIEW ════════════════════════ */}
+      {activeElection && activeTab === 'overview' && (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(12, 1fr)', gap: '1.25rem' }}>
+
+          {/* Stat cards – 4 col span each on desktop, full on mobile */}
+          <div className="stat-grid" style={{ gridColumn: '1 / -1', display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '1rem' }}>
+            <StatCard label="Total Voters" value={stats.total} sub={`${stats.sent} OTPs sent`} color="#6d28d9" icon={<Users size={18} />} className="ib-violet" />
+            <StatCard label="Votes Cast" value={stats.voted} sub={`${turnout}% turnout`} color="#f97316" icon={<Vote size={18} />} className="ib-orange" />
+            <StatCard label="Time Remaining" value={timeLeft} sub={activeElection.status === 'open' ? 'Election live' : 'Not started'} color={activeElection.status === 'open' ? '#16a34a' : '#94a3b8'} icon={<Clock size={18} />} className={activeElection.status === 'open' ? 'ib-green' : 'ib-sky'} />
+          </div>
+
+          {/* Turnout bar – 8 col */}
+          <div className="card" style={{ gridColumn: 'span 8', padding: '1.5rem' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.25rem', flexWrap: 'wrap', gap: 8 }}>
               <div>
-                <label className="block text-sm font-semibold mb-2 ml-1 text-white">Election Title</label>
-                <input 
-                  type="text" 
-                  className="input-glass"
-                  placeholder="e.g. SRC General Election 2024"
-                  value={newElection.title}
-                  onChange={e => setNewElection({...newElection, title: e.target.value})}
-                  required
-                />
+                <p style={{ fontWeight: 700, color: 'var(--text-1)', fontSize: '1rem' }}>Voter Turnout</p>
+                <p style={{ color: 'var(--text-2)', fontSize: '0.8125rem', marginTop: 2 }}>{stats.voted} of {stats.total} voters have cast ballots</p>
               </div>
+              <span style={{ fontWeight: 800, fontSize: '2rem', lineHeight: 1 }} className="text-gradient">{turnout}%</span>
+            </div>
+            <div className="progress-track">
+              <div className="progress-fill" style={{ width: `${turnout}%` }} />
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '0.75rem', fontSize: '0.75rem', color: 'var(--text-3)', fontWeight: 500 }}>
+              <span>0% — 0 votes</span>
+              <span className="badge badge-orange">{turnout}% participation</span>
+              <span>100% — {stats.total} votes</span>
+            </div>
+          </div>
+
+          {/* Controls – 4 col */}
+          <div style={{ gridColumn: 'span 4', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+            {/* Election control */}
+            <div className="card" style={{ padding: '1.5rem' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: '1.25rem' }}>
+                <div className="icon-box icon-box-sm ib-violet"><Settings size={14} /></div>
+                <p style={{ fontWeight: 700, fontSize: '0.9375rem' }}>Election Control</p>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0.75rem', borderRadius: 10, background: 'var(--surface-2)', marginBottom: '1rem' }}>
+                <span style={{ fontSize: '0.875rem', color: 'var(--text-2)', fontWeight: 500 }}>Status</span>
+                <span className={`badge badge-dot ${activeElection.status === 'open' ? 'badge-green' : 'badge-slate'}`} style={{ textTransform: 'capitalize' }}>
+                  {activeElection.status === 'open' ? 'Live' : 'Inactive'}
+                </span>
+              </div>
+              {activeElection.status !== 'open' ? (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                  <div>
+                    <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-2)', marginBottom: 4 }}>Start Date &amp; Time</label>
+                    <input
+                      type="datetime-local"
+                      className="input"
+                      style={{ fontSize: '0.8125rem' }}
+                      value={startTime}
+                      onChange={e => setStartTime(e.target.value)}
+                    />
+                  </div>
+                  <div>
+                    <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-2)', marginBottom: 4 }}>End Date &amp; Time</label>
+                    <input
+                      type="datetime-local"
+                      className="input"
+                      style={{ fontSize: '0.8125rem' }}
+                      value={endTime}
+                      onChange={e => setEndTime(e.target.value)}
+                    />
+                  </div>
+                  <button
+                    className="btn btn-primary btn-sm btn-full"
+                    onClick={() => updateStatus('open', new Date(startTime).toISOString(), new Date(endTime).toISOString())}
+                    disabled={!startTime || !endTime || new Date(endTime) <= new Date(startTime)}
+                  >
+                    <Play size={13} /> Start Election
+                  </button>
+                  {endTime && startTime && new Date(endTime) <= new Date(startTime) && (
+                    <p style={{ fontSize: '0.75rem', color: '#dc2626' }}>End time must be after start time</p>
+                  )}
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                  {activeElection.end_time && (
+                    <div style={{ padding: '0.5rem 0.75rem', borderRadius: 8, background: 'var(--surface-2)', fontSize: '0.75rem', color: 'var(--text-2)' }}>
+                      <span style={{ fontWeight: 600 }}>Ends:</span> {new Date(activeElection.end_time).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' })}
+                    </div>
+                  )}
+                  <button className="btn btn-full btn-sm" style={{ border: '1px solid #fecaca', background: '#fef2f2', color: '#b91c1c' }} onClick={() => updateStatus('closed')}>
+                    <Square size={13} /> Stop Election
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* Share link */}
+            <div className="card" style={{ padding: '1.25rem' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: '0.875rem' }}>
+                <div className="icon-box icon-box-sm ib-orange"><Share2 size={14} /></div>
+                <p style={{ fontWeight: 700, fontSize: '0.875rem' }}>Voter Link</p>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'var(--surface-2)', border: '1px solid var(--border)', borderRadius: 8, padding: '0.5rem 0.75rem' }}>
+                <span style={{ flex: 1, fontSize: '0.75rem', fontFamily: 'monospace', color: 'var(--text-2)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  /e/{activeElection.id.slice(0, 16)}…
+                </span>
+                <button className="btn btn-ghost btn-sm" style={{ padding: '0.25rem 0.625rem', gap: 4, color: copied ? '#16a34a' : 'var(--primary)', flexShrink: 0 }} onClick={copyLink}>
+                  {copied ? <CheckCheck size={13} /> : <Copy size={13} />}
+                  {copied ? 'Copied' : 'Copy'}
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* Chart – full width */}
+          <div className="card" style={{ gridColumn: '1 / -1', padding: '1.5rem' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.25rem' }}>
               <div>
-                <label className="block text-sm font-semibold mb-2 ml-1 text-white">Institution Name</label>
-                <input 
-                  type="text"
-                  className="input-glass"
-                  placeholder="e.g. University of Cape Coast"
-                  value={newElection.institution}
-                  onChange={e => setNewElection({...newElection, institution: e.target.value})}
-                  required
-                />
+                <p style={{ fontWeight: 700, color: 'var(--text-1)', fontSize: '1rem' }}>Live Results</p>
+                <p style={{ color: 'var(--text-2)', fontSize: '0.8125rem', marginTop: 2 }}>Real-time vote distribution</p>
               </div>
-              <div className="flex gap-4 pt-4">
-                <button type="button" onClick={() => setShowCreateModal(false)} className="flex-1 py-4 rounded-2xl border border-white/10 text-white font-bold hover:bg-white/5 transition-all">Cancel</button>
-                <button type="submit" className="flex-1 btn-primary py-4">Create & Start</button>
+              <div className="icon-box icon-box-sm ib-orange"><BarChart3 size={15} /></div>
+            </div>
+            <div style={{ height: 260 }}>
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={chartData.length ? chartData : MOCK_DATA} barCategoryGap="35%">
+                  <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
+                  <XAxis dataKey="name" stroke="var(--text-3)" tick={{ fontSize: 12, fontFamily: 'Inter', fill: '#64748b' }} />
+                  <YAxis stroke="var(--text-3)" tick={{ fontSize: 12, fontFamily: 'Inter', fill: '#64748b' }} />
+                  <Tooltip contentStyle={{ background: 'white', border: '1px solid var(--border)', borderRadius: 10, boxShadow: 'var(--shadow-md)', fontFamily: 'Inter', fontSize: 13 }} />
+                  <Bar dataKey="votes" radius={[6, 6, 0, 0]}>
+                    {(chartData.length ? chartData : MOCK_DATA).map((_: any, i: number) => (
+                      <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />
+                    ))}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+
+          {/* Quick stats table */}
+          <div className="card" style={{ gridColumn: '1 / -1', overflow: 'hidden' }}>
+            <div style={{ padding: '1rem 1.5rem', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 8 }}>
+              <div className="icon-box icon-box-sm ib-violet"><TrendingUp size={14} /></div>
+              <p style={{ fontWeight: 700, fontSize: '0.9375rem' }}>Participation Breakdown</p>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 0 }}>
+              {[
+                { label: 'Registered', val: stats.total },
+                { label: 'OTPs Sent', val: stats.sent },
+                { label: 'Voted', val: stats.voted },
+                { label: 'Abstained', val: stats.total - stats.voted },
+              ].map((row, i) => (
+                <div key={row.label} style={{ padding: '1.25rem 1.5rem', borderRight: i < 3 ? '1px solid var(--border)' : 'none' }}>
+                  <p style={{ fontSize: '0.8125rem', color: 'var(--text-2)', marginBottom: 6, fontWeight: 500 }}>{row.label}</p>
+                  <p style={{ fontWeight: 800, fontSize: '1.75rem', color: 'var(--text-1)', lineHeight: 1 }}>{row.val}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ═══════════════════ VOTERS / POSITIONS ══════════════ */}
+      {activeElection && activeTab === 'voters'    && <VoterManagement electionId={activeElection.id} />}
+      {activeElection && activeTab === 'positions' && <CategoryManagement electionId={activeElection.id} />}
+
+      {/* ═══════════════════ CREATE MODAL ════════════════════ */}
+      {showModal && (
+        <div className="modal-overlay" onClick={() => setShowModal(false)}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                <div className="icon-box icon-box-md ib-orange-filled"><Vote size={20} /></div>
+                <div>
+                  <h2 style={{ fontWeight: 800, fontSize: '1.25rem', color: 'var(--text-1)' }}>New Election</h2>
+                  <p style={{ fontSize: '0.8125rem', color: 'var(--text-2)', marginTop: 2 }}>Configure election details</p>
+                </div>
+              </div>
+              <button className="btn btn-icon btn-ghost" onClick={() => setShowModal(false)}><X size={18} /></button>
+            </div>
+            <form onSubmit={handleCreate}>
+              <div className="modal-body" style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 600, color: 'var(--text-2)', marginBottom: 6 }}>Election Title</label>
+                  <input className="input" placeholder="e.g. SRC General Election 2024" value={newElection.title} onChange={e => setNewElection({ ...newElection, title: e.target.value })} required />
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 600, color: 'var(--text-2)', marginBottom: 6 }}>Institution</label>
+                  <input className="input" placeholder="e.g. University of Cape Coast" value={newElection.institution} onChange={e => setNewElection({ ...newElection, institution: e.target.value })} required />
+                </div>
+              </div>
+              <div className="modal-footer">
+                <button type="button" className="btn btn-outline btn-full" onClick={() => setShowModal(false)}>Cancel</button>
+                <button type="submit" className="btn btn-primary btn-full">
+                  <Zap size={15} /> Create Election
+                </button>
               </div>
             </form>
           </div>
@@ -325,38 +472,52 @@ const AdminDashboard: React.FC = () => {
   );
 };
 
-const TabButton = ({ active, onClick, label, icon }: any) => (
-  <button 
-    onClick={onClick}
-    className={`flex items-center gap-2 px-6 py-3 rounded-xl transition-all font-bold text-sm ${
-      active ? 'bg-[#6366f1] text-white shadow-lg' : 'text-[#94a3b8] hover:text-white hover:bg-white/5'
-    }`}
-  >
-    {icon}
-    {label}
-  </button>
-);
+/* ── Election Card ── */
+const ElectionCard = ({ election, delay, onClick }: any) => {
+  const statusClass = election.status === 'open' ? 'badge-green' : election.status === 'closed' ? 'badge-red' : 'badge-orange';
+  const iconClass = election.status === 'open' ? 'ib-green-filled' : election.status === 'closed' ? 'ib-pink-filled' : 'ib-orange-filled';
 
-const StatCard = ({ icon, label, value, trend }: any) => (
-  <div className="glass-card p-6">
-    <div className="flex items-center gap-4">
-      <div className="p-4 rounded-2xl bg-white/5 border border-white/5">{icon}</div>
-      <div>
-        <p className="text-xs font-bold text-[#94a3b8] uppercase tracking-wider">{label}</p>
-        <p className="text-3xl font-bold text-white mt-1">{value}</p>
-        <p className="text-[10px] font-bold mt-2 text-[#6366f1] bg-[#6366f1]/10 px-2 py-0.5 rounded-full w-fit">{trend}</p>
+  return (
+    <div
+      className={`card card-hover delay-${Math.min(delay + 1, 5)} anim-fade-in-up`}
+      style={{ padding: '1.5rem', cursor: 'pointer', display: 'flex', flexDirection: 'column', gap: '1rem', borderRadius: 20 }}
+      onClick={onClick}
+    >
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+        <div className={`icon-box icon-box-md ${iconClass}`}><Vote size={18} /></div>
+        <span className={`badge badge-dot ${statusClass}`} style={{ textTransform: 'capitalize' }}>{election.status}</span>
+      </div>
+      <div style={{ flex: 1 }}>
+        <h3 style={{ fontWeight: 700, fontSize: '1rem', color: 'var(--text-1)', lineHeight: 1.3, marginBottom: 8 }} className="line-clamp-2">{election.title}</h3>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.8125rem', color: 'var(--text-2)' }}>
+            <Building2 size={13} /><span className="truncate">{election.institution}</span>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.8125rem', color: 'var(--text-3)' }}>
+            <Calendar size={13} />
+            <span>{new Date(election.created_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}</span>
+          </div>
+        </div>
+      </div>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', paddingTop: '0.75rem', borderTop: '1px solid var(--border)' }}>
+        <span style={{ fontSize: '0.8125rem', fontWeight: 600, color: 'var(--primary)', display: 'flex', alignItems: 'center', gap: 4 }}>
+          Open <ChevronRight size={14} />
+        </span>
       </div>
     </div>
+  );
+};
+
+/* ── Stat Card ── */
+const StatCard = ({ label, value, sub, color, icon, className }: any) => (
+  <div className="stat-card" style={{ '--stat-color': color } as any}>
+    <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: '1rem' }}>
+      <div className={`icon-box icon-box-md ${className}`}>{icon}</div>
+    </div>
+    <p style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-2)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6 }}>{label}</p>
+    <p style={{ fontWeight: 800, fontSize: '2rem', color: 'var(--text-1)', lineHeight: 1, marginBottom: 8 }}>{value}</p>
+    <span className="badge badge-slate" style={{ fontSize: '0.75rem' }}>{sub}</span>
   </div>
 );
-
-const mockChartData = [
-  { name: 'Michael Adewale', votes: 450 },
-  { name: 'Sarah Mensah', votes: 320 },
-  { name: 'Kwame Asante', votes: 120 },
-  { name: 'Linda Boakye', votes: 85 },
-];
-
-const COLORS = ['#6366f1', '#ec4899', '#8b5cf6', '#06b6d4'];
 
 export default AdminDashboard;
