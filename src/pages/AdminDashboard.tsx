@@ -4,7 +4,7 @@ import {
   Plus, Users, Vote, Clock, LayoutGrid, Search,
   Building2, Calendar, ChevronRight, BarChart3,
   Settings, Play, Square, TrendingUp, Share2,
-  Copy, CheckCheck, Zap, PlusCircle, X
+  Copy, CheckCheck, Zap, PlusCircle, X, Loader2, AlertCircle
 } from 'lucide-react';
 import type { Election } from '../types';
 import {
@@ -29,6 +29,8 @@ const AdminDashboard: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
   const [newElection, setNewElection] = useState({ title: '', institution: '' });
+  const [creating, setCreating] = useState(false);
+  const [createError, setCreateError] = useState('');
   const [activeTab, setActiveTab] = useState<'elections' | 'overview' | 'voters' | 'positions'>('elections');
   const [timeLeft, setTimeLeft] = useState('--:--:--');
   const [search, setSearch] = useState('');
@@ -117,14 +119,20 @@ const AdminDashboard: React.FC = () => {
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
-    const { data } = await supabase.from('elections').insert([newElection]).select().single();
-    if (data) {
-      setElections(prev => [data, ...prev]);
-      setActiveElection(data);
-      setActiveTab('overview');
-      setShowModal(false);
-      setNewElection({ title: '', institution: '' });
+    setCreating(true);
+    setCreateError('');
+    const { data, error } = await supabase.from('elections').insert([newElection]).select().single();
+    setCreating(false);
+    if (error || !data) {
+      setCreateError(error?.message || 'Failed to create election. Check your database permissions.');
+      return;
     }
+    setElections(prev => [data, ...prev]);
+    setActiveElection(data);
+    setActiveTab('overview');
+    setShowModal(false);
+    setNewElection({ title: '', institution: '' });
+    setCreateError('');
   };
 
   const copyLink = () => {
@@ -181,7 +189,7 @@ const AdminDashboard: React.FC = () => {
               {elections.map(el => <option key={el.id} value={el.id}>{el.title}</option>)}
             </select>
           )}
-          <button className="btn btn-primary" onClick={() => setShowModal(true)}>
+          <button className="btn btn-primary" onClick={() => { setShowModal(true); setCreateError(''); }}>
             <PlusCircle size={16} /> New Election
           </button>
         </div>
@@ -224,7 +232,7 @@ const AdminDashboard: React.FC = () => {
             ))}
             {/* Create card */}
             <div
-              onClick={() => setShowModal(true)}
+              onClick={() => { setShowModal(true); setCreateError(''); }}
               style={{
                 border: '2px dashed var(--border)',
                 borderRadius: 20,
@@ -263,7 +271,7 @@ const AdminDashboard: React.FC = () => {
               </div>
               <h2 style={{ fontWeight: 700, fontSize: '1.375rem', marginBottom: 8 }}>No elections yet</h2>
               <p style={{ color: 'var(--text-2)', marginBottom: '2rem' }}>Create your first election to get started.</p>
-              <button className="btn btn-primary btn-lg" onClick={() => setShowModal(true)}>
+              <button className="btn btn-primary btn-lg" onClick={() => { setShowModal(true); setCreateError(''); }}>
                 <PlusCircle size={18} /> Create First Election
               </button>
             </div>
@@ -445,7 +453,7 @@ const AdminDashboard: React.FC = () => {
                   <p style={{ fontSize: '0.8125rem', color: 'var(--text-2)', marginTop: 2 }}>Configure election details</p>
                 </div>
               </div>
-              <button className="btn btn-icon btn-ghost" onClick={() => setShowModal(false)}><X size={18} /></button>
+              <button className="btn btn-icon btn-ghost" onClick={() => { setShowModal(false); setCreateError(''); }}><X size={18} /></button>
             </div>
             <form onSubmit={handleCreate}>
               <div className="modal-body" style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
@@ -458,10 +466,16 @@ const AdminDashboard: React.FC = () => {
                   <input className="input" placeholder="e.g. University of Cape Coast" value={newElection.institution} onChange={e => setNewElection({ ...newElection, institution: e.target.value })} required />
                 </div>
               </div>
+              {createError && (
+                <div style={{ margin: '0 1.5rem', padding: '0.875rem', borderRadius: 10, background: '#fef2f2', border: '1px solid #fecaca', color: '#b91c1c', fontSize: '0.875rem', fontWeight: 500, display: 'flex', alignItems: 'flex-start', gap: 8 }}>
+                  <AlertCircle size={16} style={{ flexShrink: 0, marginTop: 1 }} />
+                  {createError}
+                </div>
+              )}
               <div className="modal-footer">
-                <button type="button" className="btn btn-outline btn-full" onClick={() => setShowModal(false)}>Cancel</button>
-                <button type="submit" className="btn btn-primary btn-full">
-                  <Zap size={15} /> Create Election
+                <button type="button" className="btn btn-outline btn-full" onClick={() => { setShowModal(false); setCreateError(''); }}>Cancel</button>
+                <button type="submit" className="btn btn-primary btn-full" disabled={creating}>
+                  {creating ? <><Loader2 size={15} className="anim-spin" /> Creating…</> : <><Zap size={15} /> Create Election</>}
                 </button>
               </div>
             </form>
