@@ -59,6 +59,26 @@ const VoterWelcome: React.FC = () => {
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '0.375rem 1rem', borderRadius: 999, background: 'rgba(255,255,255,0.1)', border: '1px solid rgba(255,255,255,0.15)', fontSize: '0.8125rem', fontWeight: 600, color: 'rgba(255,255,255,0.8)', marginBottom: '1.5rem' }}>
             <ShieldCheck size={14} style={{ color: '#4ade80' }} /> Secure Institutional Ballot
           </span>
+
+          {election.logo_url && (
+            <div style={{ marginBottom: '1.5rem' }}>
+              <img
+                src={election.logo_url}
+                alt={`${election.institution} logo`}
+                style={{
+                  width: 100,
+                  height: 100,
+                  borderRadius: '50%',
+                  objectFit: 'cover',
+                  border: '3px solid rgba(255,255,255,0.25)',
+                  boxShadow: '0 8px 32px rgba(0,0,0,0.35)',
+                  display: 'block',
+                  margin: '0 auto',
+                }}
+              />
+            </div>
+          )}
+
           <h1 style={{ fontSize: 'clamp(1.75rem, 5vw, 3.25rem)', fontWeight: 900, color: '#fff', lineHeight: 1.15, marginBottom: '1rem' }}>
             {election.institution}
           </h1>
