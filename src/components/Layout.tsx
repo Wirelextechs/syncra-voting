@@ -1,11 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import {
   Zap, LayoutDashboard, Settings,
-  Menu, X, ChevronRight, LogOut, ExternalLink
+  Menu, X, ChevronRight, LogOut, ExternalLink, ShieldCheck
 } from 'lucide-react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { supabase } from '../lib/supabase';
+import type { Session } from '@supabase/supabase-js';
 
-const SidebarContent: React.FC<{ onClose?: () => void }> = ({ onClose }) => {
+const SidebarContent: React.FC<{ onClose?: () => void; session: Session | null }> = ({ onClose, session }) => {
   const location = useLocation();
   const navigate = useNavigate();
   const isVoterPage = location.pathname.startsWith('/voter') || location.pathname.startsWith('/e/');
@@ -16,6 +18,11 @@ const SidebarContent: React.FC<{ onClose?: () => void }> = ({ onClose }) => {
     { to: '/admin', icon: <LayoutDashboard size={16} />, label: 'Dashboard', exact: true },
     { to: '/admin/settings', icon: <Settings size={16} />, label: 'Settings', exact: false },
   ];
+
+  const handleSignOut = async () => {
+    await supabase.auth.signOut();
+    navigate('/admin/login', { replace: true });
+  };
 
   return (
     <>
@@ -59,11 +66,30 @@ const SidebarContent: React.FC<{ onClose?: () => void }> = ({ onClose }) => {
 
       {/* Footer */}
       <div style={{ padding: '0.75rem', borderTop: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: 2 }}>
-        <button className="nav-item" onClick={() => navigate('/', { replace: true })}>
-          <span className="nav-icon"><LogOut size={16} /></span>
-          Exit Console
+        {/* Signed-in indicator */}
+        {session?.user?.email && (
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 8,
+            padding: '0.625rem 0.75rem', borderRadius: 10,
+            background: 'rgba(22,163,74,0.06)', border: '1px solid rgba(22,163,74,0.15)',
+            marginBottom: 4,
+          }}>
+            <ShieldCheck size={13} style={{ color: '#16a34a', flexShrink: 0 }} />
+            <span style={{
+              fontSize: '0.75rem', color: 'var(--text-2)', fontWeight: 500,
+              overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1,
+            }}>
+              {session.user.email}
+            </span>
+          </div>
+        )}
+
+        <button className="nav-item" onClick={handleSignOut} style={{ color: '#b91c1c' }}>
+          <span className="nav-icon" style={{ color: '#b91c1c' }}><LogOut size={16} /></span>
+          Sign Out
         </button>
-        <div style={{ padding: '0.75rem 0.25rem 0.25rem', marginTop: 4 }}>
+
+        <div style={{ padding: '0.75rem 0.25rem 0.25rem', marginTop: 2 }}>
           <div style={{ background: 'linear-gradient(135deg, rgba(109,40,217,.06), rgba(249,115,22,.06))', border: '1px solid var(--border)', borderRadius: 10, padding: '0.875rem' }}>
             <p style={{ fontSize: '0.8125rem', fontWeight: 700, color: 'var(--text-1)', marginBottom: 4 }}>Syncra v1.0</p>
             <p style={{ fontSize: '0.75rem', color: 'var(--text-2)', lineHeight: 1.5 }}>Secure · Transparent · Modern</p>
@@ -77,9 +103,17 @@ const SidebarContent: React.FC<{ onClose?: () => void }> = ({ onClose }) => {
 const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const location = useLocation();
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [session, setSession] = useState<Session | null>(null);
   const isVoterPage = location.pathname.startsWith('/voter') || location.pathname.startsWith('/e/');
   const isHomePage = location.pathname === '/';
+  const isAdminLogin = location.pathname === '/admin/login';
   const isAdmin = location.pathname.startsWith('/admin');
+
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data }) => setSession(data.session));
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_e, s) => setSession(s));
+    return () => subscription.unsubscribe();
+  }, []);
 
   useEffect(() => { setMobileOpen(false); }, [location.pathname]);
   useEffect(() => {
@@ -94,9 +128,7 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   };
 
   /* ── Home layout ── */
-  if (isHomePage) {
-    return <>{children}</>;
-  }
+  if (isHomePage) return <>{children}</>;
 
   /* ── Voter layout ── */
   if (isVoterPage) {
@@ -117,12 +149,15 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     );
   }
 
+  /* ── Admin login layout (no sidebar) ── */
+  if (isAdminLogin) return <>{children}</>;
+
   /* ── Admin layout ── */
   return (
     <div className="app-shell">
       <div className={`sidebar-overlay ${mobileOpen ? 'open' : ''}`} onClick={() => setMobileOpen(false)} />
       <aside className={`sidebar ${mobileOpen ? 'open' : ''}`} style={{ display: 'flex', flexDirection: 'column' }}>
-        <SidebarContent onClose={() => setMobileOpen(false)} />
+        <SidebarContent onClose={() => setMobileOpen(false)} session={session} />
       </aside>
       <div className="main-area">
         <header className="topbar">
