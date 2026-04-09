@@ -46,7 +46,8 @@ const AdminDashboard: React.FC = () => {
   const [timeLeft, setTimeLeft] = useState('--:--:--');
   const [search, setSearch] = useState('');
   const [stats, setStats] = useState({ total: 0, voted: 0, sent: 0 });
-  const [chartData, setChartData] = useState<any[]>([]);
+  const [catResults, setCatResults] = useState<{ id: string; name: string; candidates: { name: string; votes: number }[] }[]>([]);
+  const [selectedCatId, setSelectedCatId] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
 
   // Logo upload state (create modal)
@@ -84,7 +85,7 @@ const AdminDashboard: React.FC = () => {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'voters', filter: `election_id=eq.${activeElection.id}` }, fetchStats)
       .subscribe();
     const candSub = supabase.channel('c_rt')
-      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'candidates' }, fetchChartData)
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'candidates' }, () => fetchChartData(true))
       .subscribe();
 
     let timer: ReturnType<typeof setInterval>;
@@ -123,12 +124,29 @@ const AdminDashboard: React.FC = () => {
     setStats({ total: total || 0, voted: voted || 0, sent: sent || 0 });
   };
 
-  const fetchChartData = async () => {
+  const fetchChartData = async (keepSelection = false) => {
     if (!activeElection) return;
-    const { data: cats } = await supabase.from('categories').select('id').eq('election_id', activeElection.id);
-    if (!cats?.length) return;
-    const { data: cands } = await supabase.from('candidates').select('name, votes_count').eq('category_id', cats[0].id);
-    if (cands) setChartData(cands.map((c: any) => ({ name: c.name, votes: c.votes_count || 0 })));
+    const { data: cats } = await supabase
+      .from('categories').select('id, name')
+      .eq('election_id', activeElection.id).order('name');
+    if (!cats?.length) { setCatResults([]); return; }
+    const results = await Promise.all(
+      cats.map(async cat => {
+        const { data: cands } = await supabase
+          .from('candidates').select('name, votes_count')
+          .eq('category_id', cat.id).order('votes_count', { ascending: false });
+        return {
+          id: cat.id,
+          name: cat.name,
+          candidates: (cands || []).map((c: any) => ({ name: c.name, votes: c.votes_count || 0 })),
+        };
+      })
+    );
+    setCatResults(results);
+    setSelectedCatId(prev => {
+      if (keepSelection && prev && results.find(r => r.id === prev)) return prev;
+      return results[0]?.id ?? null;
+    });
   };
 
   const updateStatus = async (status: 'open' | 'closed', startIso?: string, endIso?: string) => {
@@ -536,28 +554,112 @@ const AdminDashboard: React.FC = () => {
           </div>
 
           <div className="card" style={{ gridColumn: '1 / -1', padding: '1.5rem' }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.25rem' }}>
+            {/* Header */}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.25rem', flexWrap: 'wrap', gap: 8 }}>
               <div>
                 <p style={{ fontWeight: 700, color: 'var(--text-1)', fontSize: '1rem' }}>Live Results</p>
-                <p style={{ color: 'var(--text-2)', fontSize: '0.8125rem', marginTop: 2 }}>Real-time vote distribution</p>
+                <p style={{ color: 'var(--text-2)', fontSize: '0.8125rem', marginTop: 2 }}>
+                  {catResults.length > 0
+                    ? `${catResults.length} position${catResults.length !== 1 ? 's' : ''} · real-time vote distribution`
+                    : 'Real-time vote distribution'}
+                </p>
               </div>
               <div className="icon-box icon-box-sm ib-orange"><BarChart3 size={15} /></div>
             </div>
-            <div style={{ height: 260 }}>
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={chartData.length ? chartData : MOCK_DATA} barCategoryGap="35%">
-                  <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
-                  <XAxis dataKey="name" stroke="var(--text-3)" tick={{ fontSize: 12, fontFamily: 'Inter', fill: '#64748b' }} />
-                  <YAxis stroke="var(--text-3)" tick={{ fontSize: 12, fontFamily: 'Inter', fill: '#64748b' }} />
-                  <Tooltip contentStyle={{ background: 'white', border: '1px solid var(--border)', borderRadius: 10, boxShadow: 'var(--shadow-md)', fontFamily: 'Inter', fontSize: 13 }} />
-                  <Bar dataKey="votes" radius={[6, 6, 0, 0]}>
-                    {(chartData.length ? chartData : MOCK_DATA).map((_: any, i: number) => (
-                      <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />
-                    ))}
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
+
+            {catResults.length === 0 ? (
+              <div style={{ textAlign: 'center', padding: '3rem 1rem', color: 'var(--text-3)' }}>
+                <BarChart3 size={32} style={{ margin: '0 auto 0.75rem', opacity: 0.3 }} />
+                <p style={{ fontWeight: 600, fontSize: '0.9375rem' }}>No positions added yet</p>
+                <p style={{ fontSize: '0.8125rem', marginTop: 4 }}>Go to the Positions tab to add categories and candidates.</p>
+              </div>
+            ) : (
+              <>
+                {/* Position tabs */}
+                {catResults.length > 1 && (
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: '1.25rem', overflowX: 'auto' }}>
+                    {catResults.map((cat, i) => {
+                      const active = cat.id === selectedCatId;
+                      const totalVotes = cat.candidates.reduce((s, c) => s + c.votes, 0);
+                      return (
+                        <button
+                          key={cat.id}
+                          onClick={() => setSelectedCatId(cat.id)}
+                          style={{
+                            padding: '0.4rem 0.875rem',
+                            borderRadius: 8,
+                            border: `1.5px solid ${active ? CHART_COLORS[i % CHART_COLORS.length] : 'var(--border)'}`,
+                            background: active ? CHART_COLORS[i % CHART_COLORS.length] : 'transparent',
+                            color: active ? '#fff' : 'var(--text-2)',
+                            fontWeight: 600,
+                            fontSize: '0.8125rem',
+                            cursor: 'pointer',
+                            transition: 'all 0.15s',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 6,
+                            whiteSpace: 'nowrap',
+                          }}
+                        >
+                          {cat.name}
+                          <span style={{
+                            padding: '0 5px',
+                            borderRadius: 5,
+                            background: active ? 'rgba(255,255,255,0.25)' : 'var(--surface-2)',
+                            color: active ? '#fff' : 'var(--text-3)',
+                            fontSize: '0.7rem',
+                            fontWeight: 700,
+                          }}>
+                            {totalVotes}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {/* Chart for selected position */}
+                {(() => {
+                  const activeCat = catResults.find(c => c.id === selectedCatId);
+                  const chartData = activeCat?.candidates ?? [];
+                  const totalVotes = chartData.reduce((s, c) => s + c.votes, 0);
+                  const catIdx = catResults.findIndex(c => c.id === selectedCatId);
+                  return (
+                    <div>
+                      {catResults.length === 1 && (
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1rem' }}>
+                          <p style={{ fontWeight: 700, fontSize: '0.9375rem', color: 'var(--text-1)' }}>{activeCat?.name}</p>
+                          <span className="badge badge-slate">{totalVotes} vote{totalVotes !== 1 ? 's' : ''} cast</span>
+                        </div>
+                      )}
+                      {catResults.length > 1 && (
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', marginBottom: '0.75rem' }}>
+                          <span className="badge badge-slate">{totalVotes} vote{totalVotes !== 1 ? 's' : ''} cast</span>
+                        </div>
+                      )}
+                      <div style={{ height: 260 }}>
+                        <ResponsiveContainer width="100%" height="100%">
+                          <BarChart data={chartData.length ? chartData : MOCK_DATA} barCategoryGap="35%">
+                            <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
+                            <XAxis dataKey="name" stroke="var(--text-3)" tick={{ fontSize: 12, fontFamily: 'Inter', fill: '#64748b' }} />
+                            <YAxis stroke="var(--text-3)" tick={{ fontSize: 12, fontFamily: 'Inter', fill: '#64748b' }} allowDecimals={false} />
+                            <Tooltip
+                              contentStyle={{ background: 'white', border: '1px solid var(--border)', borderRadius: 10, boxShadow: 'var(--shadow-md)', fontFamily: 'Inter', fontSize: 13 }}
+                              formatter={(val: any) => [`${val} vote${val !== 1 ? 's' : ''}`, 'Votes']}
+                            />
+                            <Bar dataKey="votes" radius={[6, 6, 0, 0]}>
+                              {(chartData.length ? chartData : MOCK_DATA).map((_: any, i: number) => (
+                                <Cell key={i} fill={CHART_COLORS[(catIdx < 0 ? 0 : catIdx + i) % CHART_COLORS.length]} />
+                              ))}
+                            </Bar>
+                          </BarChart>
+                        </ResponsiveContainer>
+                      </div>
+                    </div>
+                  );
+                })()}
+              </>
+            )}
           </div>
 
           <div className="card" style={{ gridColumn: '1 / -1', overflow: 'hidden' }}>
