@@ -6,6 +6,26 @@ import {
 } from 'lucide-react';
 import type { Voter } from '../types';
 
+/* ── Phone normalisation ─────────────────────────────────── */
+// Strips formatting chars, then infers the country code.
+// Rules (applied in order):
+//  1. Already starts with "+" → leave alone
+//  2. Starts with "00"        → replace "00" with "+"
+//  3. Starts with "0" + 9 digits (10-digit local, e.g. Ghanaian 0XX-XXX-XXXX)
+//     → strip leading 0 and prepend +233
+//  4. Bare 9-digit number     → prepend +233
+//  5. Anything else           → leave alone
+const normalizePhone = (raw: string): string => {
+  if (!raw) return raw;
+  // strip spaces, dashes, parentheses
+  const clean = raw.replace(/[\s\-().]/g, '');
+  if (clean.startsWith('+')) return clean;
+  if (clean.startsWith('00')) return '+' + clean.slice(2);
+  if (/^0\d{9}$/.test(clean)) return '+233' + clean.slice(1);
+  if (/^\d{9}$/.test(clean)) return '+233' + clean;
+  return clean;
+};
+
 const getOtpLength = (): number => {
   try {
     const s = JSON.parse(localStorage.getItem('syncra_settings') || '{}');
@@ -59,9 +79,10 @@ const VoterManagement: React.FC<{ electionId: string }> = ({ electionId }) => {
   const handleAdd = async (e: React.FormEvent) => {
     e.preventDefault();
     const otp = generateOtp();
+    const voterToInsert = { ...newVoter, phone: normalizePhone(newVoter.phone) };
     const { data } = await supabase
       .from('voters')
-      .insert([{ ...newVoter, election_id: electionId, otp, otp_sent: false }])
+      .insert([{ ...voterToInsert, election_id: electionId, otp, otp_sent: false }])
       .select().single();
     if (data) {
       setVoters(p => [...p, data]);
@@ -92,7 +113,7 @@ const VoterManagement: React.FC<{ electionId: string }> = ({ electionId }) => {
         headers.forEach((h, i) => {
           if (h.includes('name')) v.name = vals[i];
           if (h.includes('id') || h.includes('index') || h.includes('staff')) v.identifier = vals[i];
-          if (h.includes('phone')) v.phone = vals[i];
+          if (h.includes('phone')) v.phone = normalizePhone(vals[i] || '');
           if (h.includes('class')) v.class = vals[i];
         });
         return v;
@@ -277,7 +298,13 @@ const VoterManagement: React.FC<{ electionId: string }> = ({ electionId }) => {
                 </div>
                 <div style={{ gridColumn: '1 / -1' }}>
                   <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 600, color: 'var(--text-2)', marginBottom: 6 }}>Phone Number *</label>
-                  <input className="input" type="tel" placeholder="+233 24 000 0000" value={newVoter.phone} onChange={e => setNewVoter({ ...newVoter, phone: e.target.value })} required />
+                  <input className="input" type="tel" placeholder="e.g. 0241234567 or +233241234567" value={newVoter.phone} onChange={e => setNewVoter({ ...newVoter, phone: e.target.value })} required />
+                  {newVoter.phone && normalizePhone(newVoter.phone) !== newVoter.phone.replace(/[\s\-().]/g, '') && (
+                    <p style={{ marginTop: 5, fontSize: '0.78rem', color: '#16a34a', display: 'flex', alignItems: 'center', gap: 4 }}>
+                      <span style={{ fontWeight: 700 }}>Will be saved as:</span> {normalizePhone(newVoter.phone)}
+                    </p>
+                  )}
+                  <p style={{ marginTop: 4, fontSize: '0.75rem', color: 'var(--text-3)' }}>Local numbers (e.g. 024…) are auto-converted to international format.</p>
                 </div>
               </div>
               <div className="modal-footer">
