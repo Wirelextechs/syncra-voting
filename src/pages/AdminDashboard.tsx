@@ -1,10 +1,11 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
 import {
   Plus, Users, Vote, Clock, LayoutGrid, Search,
   Building2, Calendar, ChevronRight, BarChart3,
   Settings, Play, Square, TrendingUp, Share2,
-  Copy, CheckCheck, Zap, PlusCircle, X, Loader2, AlertCircle
+  Copy, CheckCheck, Zap, PlusCircle, X, Loader2, AlertCircle,
+  Trash2, ImagePlus, UploadCloud
 } from 'lucide-react';
 import type { Election } from '../types';
 import {
@@ -22,6 +23,16 @@ const MOCK_DATA = [
   { name: 'Candidate D', votes: 95 },
 ];
 
+/* ── Logo upload helper ── */
+const uploadLogo = async (file: File, electionHint: string): Promise<string> => {
+  const ext = file.name.split('.').pop() || 'png';
+  const path = `${electionHint.replace(/[^a-z0-9]/gi, '_').slice(0, 40)}_${Date.now()}.${ext}`;
+  const { data, error } = await supabase.storage.from('logos').upload(path, file, { upsert: true, contentType: file.type });
+  if (error) throw new Error(error.message);
+  const { data: urlData } = supabase.storage.from('logos').getPublicUrl(data.path);
+  return urlData.publicUrl;
+};
+
 /* ══════════════════════════════════════════════════════════ */
 const AdminDashboard: React.FC = () => {
   const [elections, setElections] = useState<Election[]>([]);
@@ -37,7 +48,18 @@ const AdminDashboard: React.FC = () => {
   const [stats, setStats] = useState({ total: 0, voted: 0, sent: 0 });
   const [chartData, setChartData] = useState<any[]>([]);
   const [copied, setCopied] = useState(false);
-  // Election time config
+
+  // Logo upload state
+  const [logoFile, setLogoFile] = useState<File | null>(null);
+  const [logoPreview, setLogoPreview] = useState<string | null>(null);
+  const [uploadingLogo, setUploadingLogo] = useState(false);
+  const [dragOver, setDragOver] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Delete state
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState<Election | null>(null);
+  const [deleting, setDeleting] = useState(false);
+
   const toLocalDatetimeValue = (offset: number = 0) => {
     const d = new Date(Date.now() + offset);
     d.setSeconds(0, 0);
@@ -117,11 +139,56 @@ const AdminDashboard: React.FC = () => {
     if (data) { setActiveElection(data); setElections(prev => prev.map(e => e.id === data.id ? data : e)); }
   };
 
+  /* ── Logo file handling ── */
+  const handleLogoFile = useCallback((file: File) => {
+    if (!file.type.startsWith('image/')) return;
+    if (logoPreview) URL.revokeObjectURL(logoPreview);
+    setLogoFile(file);
+    setLogoPreview(URL.createObjectURL(file));
+  }, [logoPreview]);
+
+  const onDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    setDragOver(false);
+    const file = e.dataTransfer.files[0];
+    if (file) handleLogoFile(file);
+  }, [handleLogoFile]);
+
+  const clearLogoModal = () => {
+    setLogoFile(null);
+    if (logoPreview) URL.revokeObjectURL(logoPreview);
+    setLogoPreview(null);
+    setShowModal(false);
+    setNewElection({ title: '', institution: '' });
+    setCreateError('');
+  };
+
+  /* ── Create election ── */
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
     setCreating(true);
     setCreateError('');
-    const { data, error } = await supabase.from('elections').insert([newElection]).select().single();
+
+    let logo_url: string | null = null;
+    if (logoFile) {
+      try {
+        setUploadingLogo(true);
+        logo_url = await uploadLogo(logoFile, newElection.institution || newElection.title);
+      } catch (err: any) {
+        setCreateError('Logo upload failed: ' + err.message);
+        setCreating(false);
+        setUploadingLogo(false);
+        return;
+      } finally {
+        setUploadingLogo(false);
+      }
+    }
+
+    const { data, error } = await supabase
+      .from('elections')
+      .insert([{ ...newElection, logo_url }])
+      .select().single();
+
     setCreating(false);
     if (error || !data) {
       setCreateError(error?.message || 'Failed to create election. Check your database permissions.');
@@ -130,9 +197,24 @@ const AdminDashboard: React.FC = () => {
     setElections(prev => [data, ...prev]);
     setActiveElection(data);
     setActiveTab('overview');
-    setShowModal(false);
-    setNewElection({ title: '', institution: '' });
-    setCreateError('');
+    clearLogoModal();
+  };
+
+  /* ── Delete election ── */
+  const handleDelete = async () => {
+    if (!showDeleteConfirm) return;
+    setDeleting(true);
+    const id = showDeleteConfirm.id;
+    const { error } = await supabase.from('elections').delete().eq('id', id);
+    if (!error) {
+      setElections(prev => prev.filter(e => e.id !== id));
+      if (activeElection?.id === id) {
+        setActiveElection(null);
+        setActiveTab('elections');
+      }
+    }
+    setDeleting(false);
+    setShowDeleteConfirm(null);
   };
 
   const copyLink = () => {
@@ -149,7 +231,6 @@ const AdminDashboard: React.FC = () => {
 
   const turnout = stats.total > 0 ? Math.round((stats.voted / stats.total) * 100) : 0;
 
-  /* ── Loading ── */
   if (loading) return (
     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '60vh', flexDirection: 'column', gap: 16 }}>
       <div className="anim-spin" style={{ width: 36, height: 36, borderRadius: '50%', border: '3px solid var(--border)', borderTopColor: 'var(--primary)' }} />
@@ -157,23 +238,29 @@ const AdminDashboard: React.FC = () => {
     </div>
   );
 
-  /* ── Render ── */
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.75rem' }}>
 
       {/* ── Page Header ── */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '1rem' }}>
-        <div>
-          <h1 style={{ fontSize: 'clamp(1.375rem, 3vw, 1.75rem)', fontWeight: 800, color: 'var(--text-1)', lineHeight: 1.2 }}>
-            {activeTab === 'elections'
-              ? 'Elections Hub'
-              : activeElection?.title || 'Dashboard'}
-          </h1>
-          <p style={{ color: 'var(--text-2)', fontSize: '0.9375rem', marginTop: 4 }}>
-            {activeTab === 'elections'
-              ? `${elections.length} election${elections.length !== 1 ? 's' : ''} total`
-              : activeElection?.institution || ''}
-          </p>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+          {activeElection?.logo_url && activeTab !== 'elections' && (
+            <img
+              src={activeElection.logo_url}
+              alt="logo"
+              style={{ width: 48, height: 48, borderRadius: 12, objectFit: 'cover', border: '2px solid var(--border)', flexShrink: 0 }}
+            />
+          )}
+          <div>
+            <h1 style={{ fontSize: 'clamp(1.375rem, 3vw, 1.75rem)', fontWeight: 800, color: 'var(--text-1)', lineHeight: 1.2 }}>
+              {activeTab === 'elections' ? 'Elections Hub' : activeElection?.title || 'Dashboard'}
+            </h1>
+            <p style={{ color: 'var(--text-2)', fontSize: '0.9375rem', marginTop: 4 }}>
+              {activeTab === 'elections'
+                ? `${elections.length} election${elections.length !== 1 ? 's' : ''} total`
+                : activeElection?.institution || ''}
+            </p>
+          </div>
         </div>
         <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
           {activeElection && activeTab !== 'elections' && (
@@ -219,18 +306,21 @@ const AdminDashboard: React.FC = () => {
       {/* ═══════════════════ ELECTIONS HUB ═══════════════════ */}
       {activeTab === 'elections' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
-          {/* Search */}
           <div style={{ position: 'relative', maxWidth: 480 }}>
             <Search size={16} style={{ position: 'absolute', left: '0.875rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-3)', pointerEvents: 'none' }} />
             <input className="input" placeholder="Search elections…" style={{ paddingLeft: '2.5rem' }} value={search} onChange={e => setSearch(e.target.value)} />
           </div>
 
-          {/* Grid */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '1rem' }}>
             {filtered.map((el, i) => (
-              <ElectionCard key={el.id} election={el} delay={i} onClick={() => { setActiveElection(el); setActiveTab('overview'); }} />
+              <ElectionCard
+                key={el.id}
+                election={el}
+                delay={i}
+                onClick={() => { setActiveElection(el); setActiveTab('overview'); }}
+                onDelete={e => { e.stopPropagation(); setShowDeleteConfirm(el); }}
+              />
             ))}
-            {/* Create card */}
             <div
               onClick={() => { setShowModal(true); setCreateError(''); }}
               style={{
@@ -282,15 +372,12 @@ const AdminDashboard: React.FC = () => {
       {/* ═══════════════════ OVERVIEW ════════════════════════ */}
       {activeElection && activeTab === 'overview' && (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(12, 1fr)', gap: '1.25rem' }}>
-
-          {/* Stat cards – 4 col span each on desktop, full on mobile */}
           <div className="stat-grid" style={{ gridColumn: '1 / -1', display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '1rem' }}>
             <StatCard label="Total Voters" value={stats.total} sub={`${stats.sent} OTPs sent`} color="#6d28d9" icon={<Users size={18} />} className="ib-violet" />
             <StatCard label="Votes Cast" value={stats.voted} sub={`${turnout}% turnout`} color="#f97316" icon={<Vote size={18} />} className="ib-orange" />
             <StatCard label="Time Remaining" value={timeLeft} sub={activeElection.status === 'open' ? 'Election live' : 'Not started'} color={activeElection.status === 'open' ? '#16a34a' : '#94a3b8'} icon={<Clock size={18} />} className={activeElection.status === 'open' ? 'ib-green' : 'ib-sky'} />
           </div>
 
-          {/* Turnout bar – 8 col */}
           <div className="card" style={{ gridColumn: 'span 8', padding: '1.5rem' }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.25rem', flexWrap: 'wrap', gap: 8 }}>
               <div>
@@ -309,9 +396,7 @@ const AdminDashboard: React.FC = () => {
             </div>
           </div>
 
-          {/* Controls – 4 col */}
           <div style={{ gridColumn: 'span 4', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-            {/* Election control */}
             <div className="card" style={{ padding: '1.5rem' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: '1.25rem' }}>
                 <div className="icon-box icon-box-sm ib-violet"><Settings size={14} /></div>
@@ -327,23 +412,11 @@ const AdminDashboard: React.FC = () => {
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
                   <div>
                     <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-2)', marginBottom: 4 }}>Start Date &amp; Time</label>
-                    <input
-                      type="datetime-local"
-                      className="input"
-                      style={{ fontSize: '0.8125rem' }}
-                      value={startTime}
-                      onChange={e => setStartTime(e.target.value)}
-                    />
+                    <input type="datetime-local" className="input" style={{ fontSize: '0.8125rem' }} value={startTime} onChange={e => setStartTime(e.target.value)} />
                   </div>
                   <div>
                     <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-2)', marginBottom: 4 }}>End Date &amp; Time</label>
-                    <input
-                      type="datetime-local"
-                      className="input"
-                      style={{ fontSize: '0.8125rem' }}
-                      value={endTime}
-                      onChange={e => setEndTime(e.target.value)}
-                    />
+                    <input type="datetime-local" className="input" style={{ fontSize: '0.8125rem' }} value={endTime} onChange={e => setEndTime(e.target.value)} />
                   </div>
                   <button
                     className="btn btn-primary btn-sm btn-full"
@@ -370,7 +443,6 @@ const AdminDashboard: React.FC = () => {
               )}
             </div>
 
-            {/* Share link */}
             <div className="card" style={{ padding: '1.25rem' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: '0.875rem' }}>
                 <div className="icon-box icon-box-sm ib-orange"><Share2 size={14} /></div>
@@ -388,7 +460,6 @@ const AdminDashboard: React.FC = () => {
             </div>
           </div>
 
-          {/* Chart – full width */}
           <div className="card" style={{ gridColumn: '1 / -1', padding: '1.5rem' }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.25rem' }}>
               <div>
@@ -414,7 +485,6 @@ const AdminDashboard: React.FC = () => {
             </div>
           </div>
 
-          {/* Quick stats table */}
           <div className="card" style={{ gridColumn: '1 / -1', overflow: 'hidden' }}>
             <div style={{ padding: '1rem 1.5rem', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 8 }}>
               <div className="icon-box icon-box-sm ib-violet"><TrendingUp size={14} /></div>
@@ -437,13 +507,12 @@ const AdminDashboard: React.FC = () => {
         </div>
       )}
 
-      {/* ═══════════════════ VOTERS / POSITIONS ══════════════ */}
       {activeElection && activeTab === 'voters'    && <VoterManagement electionId={activeElection.id} />}
       {activeElection && activeTab === 'positions' && <CategoryManagement electionId={activeElection.id} />}
 
       {/* ═══════════════════ CREATE MODAL ════════════════════ */}
       {showModal && (
-        <div className="modal-overlay" onClick={() => setShowModal(false)}>
+        <div className="modal-overlay" onClick={clearLogoModal}>
           <div className="modal" onClick={e => e.stopPropagation()}>
             <div className="modal-header">
               <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
@@ -453,10 +522,82 @@ const AdminDashboard: React.FC = () => {
                   <p style={{ fontSize: '0.8125rem', color: 'var(--text-2)', marginTop: 2 }}>Configure election details</p>
                 </div>
               </div>
-              <button className="btn btn-icon btn-ghost" onClick={() => { setShowModal(false); setCreateError(''); }}><X size={18} /></button>
+              <button className="btn btn-icon btn-ghost" onClick={clearLogoModal}><X size={18} /></button>
             </div>
             <form onSubmit={handleCreate}>
-              <div className="modal-body" style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+              <div className="modal-body" style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+
+                {/* Logo upload */}
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 600, color: 'var(--text-2)', marginBottom: 8 }}>
+                    Institution Logo <span style={{ fontWeight: 400, color: 'var(--text-3)' }}>(optional)</span>
+                  </label>
+
+                  {logoPreview ? (
+                    /* Preview */
+                    <div style={{ position: 'relative', display: 'inline-block' }}>
+                      <img
+                        src={logoPreview}
+                        alt="Logo preview"
+                        style={{ width: 96, height: 96, objectFit: 'cover', borderRadius: 14, border: '2px solid var(--border)', display: 'block' }}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => { setLogoFile(null); if (logoPreview) URL.revokeObjectURL(logoPreview); setLogoPreview(null); }}
+                        style={{
+                          position: 'absolute', top: -8, right: -8,
+                          width: 24, height: 24, borderRadius: '50%',
+                          background: '#ef4444', border: '2px solid white',
+                          color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                          cursor: 'pointer', padding: 0,
+                        }}
+                      >
+                        <X size={12} />
+                      </button>
+                      <p style={{ marginTop: 6, fontSize: '0.75rem', color: 'var(--text-3)' }}>{logoFile?.name}</p>
+                    </div>
+                  ) : (
+                    /* Drop zone */
+                    <div
+                      onDragOver={e => { e.preventDefault(); setDragOver(true); }}
+                      onDragLeave={() => setDragOver(false)}
+                      onDrop={onDrop}
+                      onClick={() => fileInputRef.current?.click()}
+                      style={{
+                        border: `2px dashed ${dragOver ? 'var(--primary)' : 'var(--border)'}`,
+                        borderRadius: 14,
+                        padding: '1.5rem',
+                        textAlign: 'center',
+                        cursor: 'pointer',
+                        background: dragOver ? 'rgba(109,40,217,0.04)' : 'var(--surface-2)',
+                        transition: 'all 0.2s',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        alignItems: 'center',
+                        gap: 8,
+                      }}
+                    >
+                      <div style={{ width: 40, height: 40, borderRadius: 10, background: dragOver ? 'rgba(109,40,217,0.1)' : 'var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                        <UploadCloud size={20} style={{ color: dragOver ? 'var(--primary)' : 'var(--text-3)' }} />
+                      </div>
+                      <div>
+                        <p style={{ fontWeight: 600, fontSize: '0.875rem', color: dragOver ? 'var(--primary)' : 'var(--text-2)' }}>
+                          Drop image here or click to browse
+                        </p>
+                        <p style={{ fontSize: '0.75rem', color: 'var(--text-3)', marginTop: 2 }}>PNG, JPG, SVG, WEBP — any size</p>
+                      </div>
+                    </div>
+                  )}
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept="image/*"
+                    style={{ display: 'none' }}
+                    onChange={e => { const f = e.target.files?.[0]; if (f) handleLogoFile(f); e.target.value = ''; }}
+                  />
+                </div>
+
+                {/* Title & Institution */}
                 <div>
                   <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 600, color: 'var(--text-2)', marginBottom: 6 }}>Election Title</label>
                   <input className="input" placeholder="e.g. SRC General Election 2024" value={newElection.title} onChange={e => setNewElection({ ...newElection, title: e.target.value })} required />
@@ -466,19 +607,78 @@ const AdminDashboard: React.FC = () => {
                   <input className="input" placeholder="e.g. University of Cape Coast" value={newElection.institution} onChange={e => setNewElection({ ...newElection, institution: e.target.value })} required />
                 </div>
               </div>
+
               {createError && (
                 <div style={{ margin: '0 1.5rem', padding: '0.875rem', borderRadius: 10, background: '#fef2f2', border: '1px solid #fecaca', color: '#b91c1c', fontSize: '0.875rem', fontWeight: 500, display: 'flex', alignItems: 'flex-start', gap: 8 }}>
                   <AlertCircle size={16} style={{ flexShrink: 0, marginTop: 1 }} />
                   {createError}
                 </div>
               )}
+
               <div className="modal-footer">
-                <button type="button" className="btn btn-outline btn-full" onClick={() => { setShowModal(false); setCreateError(''); }}>Cancel</button>
+                <button type="button" className="btn btn-outline btn-full" onClick={clearLogoModal}>Cancel</button>
                 <button type="submit" className="btn btn-primary btn-full" disabled={creating}>
-                  {creating ? <><Loader2 size={15} className="anim-spin" /> Creating…</> : <><Zap size={15} /> Create Election</>}
+                  {creating
+                    ? <><Loader2 size={15} className="anim-spin" /> {uploadingLogo ? 'Uploading logo…' : 'Creating…'}</>
+                    : <><Zap size={15} /> Create Election</>}
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* ═══════════════════ DELETE CONFIRMATION ════════════ */}
+      {showDeleteConfirm && (
+        <div className="modal-overlay" onClick={() => !deleting && setShowDeleteConfirm(null)}>
+          <div className="modal" style={{ maxWidth: 460 }} onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                <div style={{ width: 44, height: 44, borderRadius: 12, background: '#fef2f2', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                  <Trash2 size={20} style={{ color: '#dc2626' }} />
+                </div>
+                <div>
+                  <h2 style={{ fontWeight: 700, fontSize: '1.125rem', color: 'var(--text-1)' }}>Delete Election</h2>
+                  <p style={{ fontSize: '0.8125rem', color: 'var(--text-2)' }}>This action cannot be undone</p>
+                </div>
+              </div>
+              <button className="btn btn-icon btn-ghost" onClick={() => setShowDeleteConfirm(null)} disabled={deleting}><X size={18} /></button>
+            </div>
+
+            <div className="modal-body" style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+              <div style={{ padding: '1rem', borderRadius: 12, background: 'var(--surface-2)', border: '1px solid var(--border)' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  {showDeleteConfirm.logo_url
+                    ? <img src={showDeleteConfirm.logo_url} alt="" style={{ width: 40, height: 40, borderRadius: 8, objectFit: 'cover', flexShrink: 0 }} />
+                    : <div className="icon-box icon-box-sm ib-orange-filled" style={{ flexShrink: 0 }}><Vote size={14} /></div>}
+                  <div>
+                    <p style={{ fontWeight: 700, color: 'var(--text-1)', lineHeight: 1.2 }}>{showDeleteConfirm.title}</p>
+                    <p style={{ fontSize: '0.8125rem', color: 'var(--text-2)' }}>{showDeleteConfirm.institution}</p>
+                  </div>
+                </div>
+              </div>
+
+              <div style={{ padding: '0.875rem 1rem', borderRadius: 10, background: '#fef2f2', border: '1px solid #fecaca' }}>
+                <p style={{ fontSize: '0.875rem', color: '#b91c1c', fontWeight: 600, marginBottom: 4 }}>The following will be permanently deleted:</p>
+                <ul style={{ fontSize: '0.8125rem', color: '#b91c1c', paddingLeft: '1.25rem', margin: 0, lineHeight: 2 }}>
+                  <li>All registered voters and their OTPs</li>
+                  <li>All positions (categories) and candidates</li>
+                  <li>All cast votes and audit records</li>
+                </ul>
+              </div>
+            </div>
+
+            <div className="modal-footer">
+              <button className="btn btn-outline btn-full" onClick={() => setShowDeleteConfirm(null)} disabled={deleting}>Cancel</button>
+              <button
+                className="btn btn-full"
+                style={{ background: '#dc2626', color: 'white', border: 'none' }}
+                onClick={handleDelete}
+                disabled={deleting}
+              >
+                {deleting ? <><Loader2 size={15} className="anim-spin" /> Deleting…</> : <><Trash2 size={15} /> Yes, Delete Election</>}
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -487,9 +687,9 @@ const AdminDashboard: React.FC = () => {
 };
 
 /* ── Election Card ── */
-const ElectionCard = ({ election, delay, onClick }: any) => {
+const ElectionCard = ({ election, delay, onClick, onDelete }: { election: Election; delay: number; onClick: () => void; onDelete: (e: React.MouseEvent) => void }) => {
   const statusClass = election.status === 'open' ? 'badge-green' : election.status === 'closed' ? 'badge-red' : 'badge-orange';
-  const iconClass = election.status === 'open' ? 'ib-green-filled' : election.status === 'closed' ? 'ib-pink-filled' : 'ib-orange-filled';
+  const iconClass   = election.status === 'open' ? 'ib-green-filled' : election.status === 'closed' ? 'ib-pink-filled' : 'ib-orange-filled';
 
   return (
     <div
@@ -498,7 +698,9 @@ const ElectionCard = ({ election, delay, onClick }: any) => {
       onClick={onClick}
     >
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-        <div className={`icon-box icon-box-md ${iconClass}`}><Vote size={18} /></div>
+        {election.logo_url
+          ? <img src={election.logo_url} alt="logo" style={{ width: 44, height: 44, borderRadius: 10, objectFit: 'cover', border: '1px solid var(--border)' }} />
+          : <div className={`icon-box icon-box-md ${iconClass}`}><Vote size={18} /></div>}
         <span className={`badge badge-dot ${statusClass}`} style={{ textTransform: 'capitalize' }}>{election.status}</span>
       </div>
       <div style={{ flex: 1 }}>
@@ -517,6 +719,14 @@ const ElectionCard = ({ election, delay, onClick }: any) => {
         <span style={{ fontSize: '0.8125rem', fontWeight: 600, color: 'var(--primary)', display: 'flex', alignItems: 'center', gap: 4 }}>
           Open <ChevronRight size={14} />
         </span>
+        <button
+          className="btn btn-icon btn-sm"
+          style={{ color: '#dc2626', background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 8 }}
+          onClick={onDelete}
+          title="Delete election"
+        >
+          <Trash2 size={13} />
+        </button>
       </div>
     </div>
   );
