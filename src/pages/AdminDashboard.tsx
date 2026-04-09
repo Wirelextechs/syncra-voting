@@ -5,7 +5,7 @@ import {
   Building2, Calendar, ChevronRight, BarChart3,
   Settings, Play, Square, TrendingUp, Share2,
   Copy, CheckCheck, Zap, PlusCircle, X, Loader2, AlertCircle,
-  Trash2, UploadCloud
+  Trash2, UploadCloud, Camera
 } from 'lucide-react';
 import type { Election } from '../types';
 import {
@@ -49,12 +49,17 @@ const AdminDashboard: React.FC = () => {
   const [chartData, setChartData] = useState<any[]>([]);
   const [copied, setCopied] = useState(false);
 
-  // Logo upload state
+  // Logo upload state (create modal)
   const [logoFile, setLogoFile] = useState<File | null>(null);
   const [logoPreview, setLogoPreview] = useState<string | null>(null);
   const [uploadingLogo, setUploadingLogo] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Change logo for existing election
+  const [changingLogo, setChangingLogo] = useState(false);
+  const [logoHover, setLogoHover] = useState(false);
+  const changeLogoRef = useRef<HTMLInputElement>(null);
 
   // Delete state
   const [showDeleteConfirm, setShowDeleteConfirm] = useState<Election | null>(null);
@@ -224,6 +229,28 @@ const AdminDashboard: React.FC = () => {
     setTimeout(() => setCopied(false), 2000);
   };
 
+  /* ── Change logo for existing election ── */
+  const handleChangeLogo = async (file: File) => {
+    if (!activeElection || !file.type.startsWith('image/')) return;
+    setChangingLogo(true);
+    try {
+      const url = await uploadLogo(file, activeElection.institution || activeElection.title);
+      const { data } = await supabase
+        .from('elections')
+        .update({ logo_url: url })
+        .eq('id', activeElection.id)
+        .select().single();
+      if (data) {
+        setActiveElection(data);
+        setElections(prev => prev.map(e => e.id === data.id ? data : e));
+      }
+    } catch (err) {
+      console.error('Logo change failed:', err);
+    } finally {
+      setChangingLogo(false);
+    }
+  };
+
   const filtered = elections.filter(e =>
     e.title.toLowerCase().includes(search.toLowerCase()) ||
     e.institution.toLowerCase().includes(search.toLowerCase())
@@ -244,12 +271,60 @@ const AdminDashboard: React.FC = () => {
       {/* ── Page Header ── */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '1rem' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-          {activeElection?.logo_url && activeTab !== 'elections' && (
-            <img
-              src={activeElection.logo_url}
-              alt="logo"
-              style={{ width: 48, height: 48, borderRadius: 12, objectFit: 'cover', border: '2px solid var(--border)', flexShrink: 0 }}
-            />
+          {activeElection && activeTab !== 'elections' && (
+            <>
+              {/* Clickable logo / placeholder */}
+              <div
+                style={{ position: 'relative', flexShrink: 0, cursor: 'pointer' }}
+                onClick={() => changeLogoRef.current?.click()}
+                onMouseEnter={() => setLogoHover(true)}
+                onMouseLeave={() => setLogoHover(false)}
+                title={activeElection.logo_url ? 'Change logo' : 'Upload logo'}
+              >
+                {activeElection.logo_url ? (
+                  <img
+                    src={activeElection.logo_url}
+                    alt="logo"
+                    style={{ width: 52, height: 52, borderRadius: 12, objectFit: 'cover', border: '2px solid var(--border)', display: 'block' }}
+                  />
+                ) : (
+                  <div style={{
+                    width: 52, height: 52, borderRadius: 12,
+                    border: '2px dashed var(--border)',
+                    background: 'var(--surface-2)',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  }}>
+                    <Camera size={18} style={{ color: 'var(--text-3)' }} />
+                  </div>
+                )}
+
+                {/* Hover / loading overlay */}
+                {(logoHover || changingLogo) && (
+                  <div style={{
+                    position: 'absolute', inset: 0, borderRadius: 12,
+                    background: 'rgba(0,0,0,0.55)',
+                    display: 'flex', flexDirection: 'column',
+                    alignItems: 'center', justifyContent: 'center', gap: 2,
+                  }}>
+                    {changingLogo
+                      ? <Loader2 size={16} style={{ color: 'white' }} className="anim-spin" />
+                      : <Camera size={16} style={{ color: 'white' }} />}
+                    <span style={{ fontSize: '0.6rem', color: 'white', fontWeight: 600, lineHeight: 1 }}>
+                      {changingLogo ? 'Saving…' : activeElection.logo_url ? 'Change' : 'Upload'}
+                    </span>
+                  </div>
+                )}
+              </div>
+
+              {/* Hidden input for logo change */}
+              <input
+                ref={changeLogoRef}
+                type="file"
+                accept="image/*"
+                style={{ display: 'none' }}
+                onChange={e => { const f = e.target.files?.[0]; if (f) handleChangeLogo(f); e.target.value = ''; }}
+              />
+            </>
           )}
           <div>
             <h1 style={{ fontSize: 'clamp(1.375rem, 3vw, 1.75rem)', fontWeight: 800, color: 'var(--text-1)', lineHeight: 1.2 }}>

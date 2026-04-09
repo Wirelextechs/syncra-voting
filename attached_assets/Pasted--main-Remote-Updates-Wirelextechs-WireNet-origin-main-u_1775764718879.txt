@@ -1,0 +1,146 @@
+
+
+main
+
+
+Remote Updates
+Wirelextechs/WireNet
+origin/main•upstream
+last fetched 7 hours ago
+
+
+Sync Changes
+1
+
+Pull
+
+Push
+Commit
+There are no changes to commit.
+Enhance security by protecting admin endpoints and removing sensitive logs
+
+
+
+Show previous messages
+
+24 messages & 72 actions
+
+Checkpoint made
+19 hours ago
+
+Worked for 7 minutes
+can we upgrade our entire ui to look more like a professionally highly ultramodern clean designed complete app. the entire ui/ux. eliminate all ai looking elements like ⚡✨💫
+
+19 hours ago
+
+12 messages & 48 actions
+
+Worked for 4 minutes
+i was especifically referring to these particular emojis and anytin that looked like or take the shape of these emojis. ⚡✨💫
+
+19 hours ago
+
+3 actions
+Got it — just those specific emoji and the Sparkles icon which looks just like ✨. Let me read the exact contexts for each occurrence:
+
+
+4 actions
+Clear — just those three specific types: ⚡ ✨ 💫 and the Sparkles icon. Let me fix all of them now:
+
+
+2 actions
+Now I'll make all the targeted changes across the 4 files simultaneously:
+
+
+5 actions
+Now update the actual icon usages in each file:
+
+
+7 actions
+Now handle the OrderSuccess.tsx changes — remove the floating Sparkles divs and the emoji text:
+
+
+4 actions
+Let me do a final check to confirm all three emoji types and the Sparkles icon are gone:
+
+
+2 actions
+All clear — no results means every instance has been removed. Let me restart to confirm everything compiles:
+
+
+2 actions
+All done. Here's exactly what was changed:
+
+⚡ (lightning bolt) — 1 instance:
+
+AdminDashboard FastNet Admin nav button: replaced with a proper Zap icon from the icon library
+✨ (sparkles text) — 2 instances:
+
+Order success page "What's next?" heading: removed the emoji, kept the text
+Order success page title "Order Successful! 🎉": also cleaned up the 🎉 while there
+💫 / Sparkles icon (looks identical to ✨) — 6 instances:
+
+Storefront MTN Up2U service card icon: replaced with Database
+Storefront vendor promo banner icon: replaced with Tag
+Storefront "Ghana's Premier Data Hub" badge icon: replaced with Globe
+Storefront "Best prices" pill icon: replaced with Tag
+Shop storefront MTN Up2U service card icon: replaced with Database
+Order success page: 3 floating animated Sparkles decorations removed entirely
+
+5 messages & 12 actions
+
+Checkpoint made
+10 hours ago
+
+Worked for 5 minutes
+why has the ai suddenly stopped attending to customer threads
+
+7 hours ago
+
+6 messages & 29 actions
+
+Checkpoint made
+7 hours ago
+
+Worked for 3 minutes
+is there anything we can do to recover the ai autonomously after a downtime
+
+7 hours ago
+
+10 messages & 32 actions
+
+Checkpoint made
+7 hours ago
+
+Worked for 3 minutes
+lets guide the ai properly, our payment gateways are two. its not just paystack but moolre. paystack sends an email after payment with payment reference and moolre sends an sms with payment Tx ID after payment. we should ask users to provide either of them theyre having rather than sticking to just paystack
+
+7 hours ago
+
+5 messages & 15 actions
+
+Checkpoint made
+7 hours ago
+
+Worked for 2 minutes
+no momo sms tx id, rather tx id as seen in the moolre sms
+
+7 hours ago
+
+2 messages & 3 actions
+
+Checkpoint made
+7 hours ago
+
+Worked for 20 seconds
+check the site for an overall vulnerabilities, security concerns, anything that we have mistakenly made available for attackers to use against the site malaciously
+
+7 hours ago
+
+8 messages & 45 actions
+
+Checkpoint made
+7 hours ago
+
+Worked for 5 minutes
+can we have the ability to add the institution logo/photo for already created elections that lack it
