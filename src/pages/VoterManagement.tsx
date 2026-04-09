@@ -2,22 +2,14 @@ import React, { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
 import {
   UserPlus, Upload, Trash2, Search,
-  CheckCircle2, XCircle, Send, Loader2, Users, X, Download
+  CheckCircle2, XCircle, Send, Loader2, Users, X, Download,
+  Copy, MessageSquare, ExternalLink, FileDown
 } from 'lucide-react';
-import type { Voter } from '../types';
+import type { Voter, Election } from '../types';
 
 /* ── Phone normalisation ─────────────────────────────────── */
-// Strips formatting chars, then infers the country code.
-// Rules (applied in order):
-//  1. Already starts with "+" → leave alone
-//  2. Starts with "00"        → replace "00" with "+"
-//  3. Starts with "0" + 9 digits (10-digit local, e.g. Ghanaian 0XX-XXX-XXXX)
-//     → strip leading 0 and prepend +233
-//  4. Bare 9-digit number     → prepend +233
-//  5. Anything else           → leave alone
 const normalizePhone = (raw: string): string => {
   if (!raw) return raw;
-  // strip spaces, dashes, parentheses
   const clean = raw.replace(/[\s\-().]/g, '');
   if (clean.startsWith('+')) return clean;
   if (clean.startsWith('00')) return '+' + clean.slice(2);
@@ -26,6 +18,7 @@ const normalizePhone = (raw: string): string => {
   return clean;
 };
 
+/* ── OTP helpers ─────────────────────────────────────────── */
 const getOtpLength = (): number => {
   try {
     const s = JSON.parse(localStorage.getItem('syncra_settings') || '{}');
@@ -40,6 +33,10 @@ const generateOtp = () => {
   const max = Math.pow(10, len) - 1;
   return Math.floor(min + Math.random() * (max - min + 1)).toString();
 };
+
+/* ── OTP message builder ─────────────────────────────────── */
+const buildOtpMessage = (voter: Voter, electionTitle: string, electionLink: string): string =>
+  `Hello ${voter.name},\n\nYou have been registered to vote in the ${electionTitle}.\n\nYour Voter ID: ${voter.identifier}\nYour OTP: ${voter.otp}\n\nCast your vote here:\n${electionLink}\n\nDo not share your OTP with anyone. It is valid for this election only.`;
 
 /* ── Sample CSV template ── */
 const SAMPLE_CSV = `name,identifier,phone,class
@@ -61,19 +58,52 @@ const downloadSampleCsv = () => {
 /* ─────────────────────────────────────────── Component ──── */
 const VoterManagement: React.FC<{ electionId: string }> = ({ electionId }) => {
   const [voters, setVoters] = useState<Voter[]>([]);
+  const [election, setElection] = useState<Election | null>(null);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [showAdd, setShowAdd] = useState(false);
   const [newVoter, setNewVoter] = useState({ name: '', identifier: '', phone: '', class: '' });
   const [sending, setSending] = useState(false);
   const [deleting, setDeleting] = useState<string | null>(null);
+  const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [showOtpPreview, setShowOtpPreview] = useState(false);
 
-  useEffect(() => { if (electionId) fetchVoters(); }, [electionId]);
+  useEffect(() => { if (electionId) { fetchVoters(); fetchElection(); } }, [electionId]);
+
+  const fetchElection = async () => {
+    const { data } = await supabase.from('elections').select('*').eq('id', electionId).single();
+    if (data) setElection(data);
+  };
 
   const fetchVoters = async () => {
     const { data } = await supabase.from('voters').select('*').eq('election_id', electionId).order('name');
     if (data) setVoters(data);
     setLoading(false);
+  };
+
+  const electionLink = `${window.location.origin}/e/${electionId}`;
+  const electionTitle = election ? `${election.title} — ${election.institution}` : 'this election';
+
+  const getMsg = (voter: Voter) => buildOtpMessage(voter, electionTitle, electionLink);
+
+  const copyMsg = (voter: Voter) => {
+    navigator.clipboard.writeText(getMsg(voter));
+    setCopiedId(voter.id);
+    setTimeout(() => setCopiedId(null), 2000);
+  };
+
+  const downloadAllMessages = () => {
+    const unsent = voters.filter(v => !v.otp_sent);
+    const content = unsent.map(v =>
+      `──────────────────────────────\n${getMsg(v)}\n`
+    ).join('\n');
+    const blob = new Blob([content], { type: 'text/plain;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `otp_messages_${electionId.slice(0, 8)}.txt`;
+    a.click();
+    URL.revokeObjectURL(url);
   };
 
   const handleAdd = async (e: React.FormEvent) => {
@@ -102,7 +132,7 @@ const VoterManagement: React.FC<{ electionId: string }> = ({ electionId }) => {
   const handleCsv = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    e.target.value = '';  // allow re-upload
+    e.target.value = '';
     const reader = new FileReader();
     reader.onload = async ev => {
       const lines = (ev.target?.result as string).split('\n').filter(l => l.trim());
@@ -126,13 +156,15 @@ const VoterManagement: React.FC<{ electionId: string }> = ({ electionId }) => {
     reader.readAsText(file);
   };
 
-  const sendOtps = async () => {
+  const confirmSendOtps = async () => {
     setSending(true);
     const { error } = await supabase.from('voters').update({ otp_sent: true }).eq('election_id', electionId).eq('otp_sent', false);
     if (!error) setVoters(p => p.map(v => ({ ...v, otp_sent: true })));
     setSending(false);
+    setShowOtpPreview(false);
   };
 
+  const unsentVoters = voters.filter(v => !v.otp_sent);
   const filtered = voters.filter(v =>
     v.name.toLowerCase().includes(search.toLowerCase()) ||
     v.identifier.toLowerCase().includes(search.toLowerCase())
@@ -176,12 +208,7 @@ const VoterManagement: React.FC<{ electionId: string }> = ({ electionId }) => {
               <Upload size={14} style={{ color: 'var(--primary)' }} /> Upload CSV
               <input type="file" accept=".csv" style={{ display: 'none' }} onChange={handleCsv} />
             </label>
-            <button
-              className="btn btn-ghost btn-sm"
-              onClick={downloadSampleCsv}
-              title="Download sample CSV template"
-              style={{ borderRadius: 0, gap: 4 }}
-            >
+            <button className="btn btn-ghost btn-sm" onClick={downloadSampleCsv} title="Download sample CSV template" style={{ borderRadius: 0, gap: 4 }}>
               <Download size={14} style={{ color: 'var(--secondary)' }} />
               <span style={{ fontSize: '0.75rem', color: 'var(--text-2)' }}>Sample</span>
             </button>
@@ -189,11 +216,11 @@ const VoterManagement: React.FC<{ electionId: string }> = ({ electionId }) => {
 
           <button
             className="btn btn-secondary btn-sm"
-            disabled={otpSent === voters.length || sending || loading || voters.length === 0}
-            onClick={sendOtps}
+            disabled={unsentVoters.length === 0 || sending || loading}
+            onClick={() => setShowOtpPreview(true)}
           >
             {sending ? <Loader2 size={14} className="anim-spin" /> : <Send size={14} />}
-            Send OTPs
+            Send OTPs {unsentVoters.length > 0 && `(${unsentVoters.length})`}
           </button>
         </div>
       </div>
@@ -213,9 +240,9 @@ const VoterManagement: React.FC<{ electionId: string }> = ({ electionId }) => {
                 <th>Voter</th>
                 <th>ID / Index</th>
                 <th className="hide-mobile">Class</th>
-                <th>OTP</th>
+                <th>OTP Status</th>
                 <th>Voted</th>
-                <th style={{ textAlign: 'right' }}>Delete</th>
+                <th style={{ textAlign: 'right' }}>Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -243,16 +270,24 @@ const VoterManagement: React.FC<{ electionId: string }> = ({ electionId }) => {
                       : <XCircle size={18} style={{ color: 'var(--border)' }} />}
                   </td>
                   <td style={{ textAlign: 'right' }}>
-                    <button
-                      className="btn btn-icon btn-danger-ghost btn-sm"
-                      disabled={deleting === voter.id}
-                      onClick={() => handleDelete(voter.id)}
-                      title="Delete voter"
-                    >
-                      {deleting === voter.id
-                        ? <Loader2 size={13} className="anim-spin" />
-                        : <Trash2 size={13} />}
-                    </button>
+                    <div style={{ display: 'flex', gap: 4, justifyContent: 'flex-end' }}>
+                      <button
+                        className="btn btn-icon btn-ghost btn-sm"
+                        onClick={() => copyMsg(voter)}
+                        title="Copy OTP message with election link"
+                        style={{ color: copiedId === voter.id ? '#16a34a' : 'var(--secondary)' }}
+                      >
+                        {copiedId === voter.id ? <CheckCircle2 size={13} /> : <MessageSquare size={13} />}
+                      </button>
+                      <button
+                        className="btn btn-icon btn-danger-ghost btn-sm"
+                        disabled={deleting === voter.id}
+                        onClick={() => handleDelete(voter.id)}
+                        title="Delete voter"
+                      >
+                        {deleting === voter.id ? <Loader2 size={13} className="anim-spin" /> : <Trash2 size={13} />}
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -268,7 +303,95 @@ const VoterManagement: React.FC<{ electionId: string }> = ({ electionId }) => {
         </div>
       </div>
 
-      {/* Add Modal */}
+      {/* ── OTP Preview Modal ── */}
+      {showOtpPreview && (
+        <div className="modal-overlay" onClick={() => !sending && setShowOtpPreview(false)}>
+          <div className="modal" style={{ maxWidth: 620 }} onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                <div className="icon-box icon-box-md ib-orange-filled"><Send size={18} /></div>
+                <div>
+                  <h2 style={{ fontWeight: 700, fontSize: '1.125rem', color: 'var(--text-1)' }}>OTP Message Preview</h2>
+                  <p style={{ fontSize: '0.8125rem', color: 'var(--text-2)' }}>{unsentVoters.length} voter{unsentVoters.length !== 1 ? 's' : ''} will be marked as notified</p>
+                </div>
+              </div>
+              <button className="btn btn-icon btn-ghost" onClick={() => setShowOtpPreview(false)} disabled={sending}><X size={18} /></button>
+            </div>
+
+            <div className="modal-body" style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+              {/* Election link */}
+              <div style={{ padding: '0.75rem 1rem', borderRadius: 10, background: 'rgba(109,40,217,0.05)', border: '1px solid rgba(109,40,217,0.15)', display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.8125rem' }}>
+                <ExternalLink size={14} style={{ color: 'var(--secondary)', flexShrink: 0 }} />
+                <span style={{ color: 'var(--text-2)' }}>Election link included in every message:</span>
+                <span style={{ fontFamily: 'monospace', color: 'var(--secondary)', fontWeight: 600, wordBreak: 'break-all' }}>{electionLink}</span>
+              </div>
+
+              {/* Sample message */}
+              {unsentVoters[0] && (
+                <div>
+                  <p style={{ fontSize: '0.8125rem', fontWeight: 600, color: 'var(--text-2)', marginBottom: 8 }}>Sample message (first voter):</p>
+                  <pre style={{
+                    background: 'var(--surface-2)',
+                    border: '1px solid var(--border)',
+                    borderRadius: 10,
+                    padding: '1rem',
+                    fontSize: '0.8125rem',
+                    color: 'var(--text-1)',
+                    lineHeight: 1.65,
+                    whiteSpace: 'pre-wrap',
+                    wordBreak: 'break-word',
+                    fontFamily: 'inherit',
+                    margin: 0,
+                  }}>
+                    {getMsg(unsentVoters[0])}
+                  </pre>
+                </div>
+              )}
+
+              {/* Voter list preview */}
+              <div>
+                <p style={{ fontSize: '0.8125rem', fontWeight: 600, color: 'var(--text-2)', marginBottom: 8 }}>Recipients ({unsentVoters.length}):</p>
+                <div style={{ maxHeight: 180, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  {unsentVoters.map(v => (
+                    <div key={v.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0.5rem 0.75rem', borderRadius: 8, background: 'var(--surface-2)', fontSize: '0.8125rem' }}>
+                      <div>
+                        <span style={{ fontWeight: 600, color: 'var(--text-1)' }}>{v.name}</span>
+                        <span style={{ color: 'var(--text-3)', marginLeft: 8 }}>{v.phone || 'No phone'}</span>
+                      </div>
+                      <button
+                        className="btn btn-ghost btn-sm"
+                        style={{ gap: 4, fontSize: '0.75rem', padding: '0.2rem 0.5rem', color: copiedId === v.id ? '#16a34a' : 'var(--secondary)' }}
+                        onClick={() => copyMsg(v)}
+                      >
+                        {copiedId === v.id ? <CheckCircle2 size={12} /> : <Copy size={12} />}
+                        {copiedId === v.id ? 'Copied' : 'Copy'}
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <p style={{ fontSize: '0.8125rem', color: 'var(--text-3)', lineHeight: 1.55 }}>
+                Clicking <strong>Confirm</strong> marks all pending voters as notified in the system. Copy individual messages above or download all to send via SMS, WhatsApp, or email.
+              </p>
+            </div>
+
+            <div className="modal-footer">
+              <button className="btn btn-outline" onClick={downloadAllMessages} style={{ gap: 6 }}>
+                <FileDown size={15} /> Download All Messages
+              </button>
+              <div style={{ display: 'flex', gap: '0.5rem', marginLeft: 'auto' }}>
+                <button className="btn btn-outline" onClick={() => setShowOtpPreview(false)} disabled={sending}>Cancel</button>
+                <button className="btn btn-primary" onClick={confirmSendOtps} disabled={sending}>
+                  {sending ? <><Loader2 size={14} className="anim-spin" /> Marking sent…</> : <><Send size={14} /> Confirm Sent</>}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Add Voter Modal ── */}
       {showAdd && (
         <div className="modal-overlay" onClick={() => setShowAdd(false)}>
           <div className="modal" onClick={e => e.stopPropagation()}>
