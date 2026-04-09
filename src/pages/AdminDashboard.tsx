@@ -5,7 +5,7 @@ import {
   Building2, Calendar, ChevronRight, BarChart3,
   Settings, Play, Square, TrendingUp, Share2,
   Copy, CheckCheck, Zap, PlusCircle, X, Loader2, AlertCircle,
-  Trash2, ImagePlus, UploadCloud
+  Trash2, UploadCloud
 } from 'lucide-react';
 import type { Election } from '../types';
 import {
