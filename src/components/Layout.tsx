@@ -9,7 +9,8 @@ const SidebarContent: React.FC<{ onClose?: () => void }> = ({ onClose }) => {
   const location = useLocation();
   const navigate = useNavigate();
   const isVoterPage = location.pathname.startsWith('/voter') || location.pathname.startsWith('/e/');
-  if (isVoterPage) return null;
+  const isHomePage = location.pathname === '/';
+  if (isVoterPage || isHomePage) return null;
 
   const links = [
     { to: '/admin', icon: <LayoutDashboard size={16} />, label: 'Dashboard', exact: true },
@@ -58,7 +59,7 @@ const SidebarContent: React.FC<{ onClose?: () => void }> = ({ onClose }) => {
 
       {/* Footer */}
       <div style={{ padding: '0.75rem', borderTop: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: 2 }}>
-        <button className="nav-item" onClick={() => navigate('/')}>
+        <button className="nav-item" onClick={() => navigate('/', { replace: true })}>
           <span className="nav-icon"><LogOut size={16} /></span>
           Exit Console
         </button>
@@ -77,6 +78,7 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const location = useLocation();
   const [mobileOpen, setMobileOpen] = useState(false);
   const isVoterPage = location.pathname.startsWith('/voter') || location.pathname.startsWith('/e/');
+  const isHomePage = location.pathname === '/';
   const isAdmin = location.pathname.startsWith('/admin');
 
   useEffect(() => { setMobileOpen(false); }, [location.pathname]);
@@ -90,6 +92,11 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     if (location.pathname === '/admin/settings') return 'Settings';
     return null;
   };
+
+  /* ── Home layout ── */
+  if (isHomePage) {
+    return <>{children}</>;
+  }
 
   /* ── Voter layout ── */
   if (isVoterPage) {

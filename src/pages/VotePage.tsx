@@ -1,8 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
-import { CheckCircle2, ArrowRight, ArrowLeft, Send, ShieldCheck, Loader2, User } from 'lucide-react';
+import { CheckCircle2, ArrowRight, ArrowLeft, Send, ShieldCheck, Loader2, User, AlertTriangle } from 'lucide-react';
 import type { Category, Candidate, Voter } from '../types';
+
+const getSettings = () => {
+  try { return JSON.parse(localStorage.getItem('syncra_settings') || '{}'); } catch { return {}; }
+};
 
 const VotePage: React.FC = () => {
   const [voter, setVoter] = useState<Voter | null>(null);
@@ -14,6 +18,8 @@ const VotePage: React.FC = () => {
   const [submitting, setSubmitting] = useState(false);
   const [completed, setCompleted] = useState(false);
   const navigate = useNavigate();
+  const settings = getSettings();
+  const maintenanceMode = settings.maintenanceMode === true;
 
   useEffect(() => { checkAuth(); }, []);
 
@@ -56,6 +62,22 @@ const VotePage: React.FC = () => {
       }
     } finally { setSubmitting(false); }
   };
+
+  /* ── Maintenance Mode ── */
+  if (!loading && maintenanceMode) return (
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: 'calc(100dvh - 56px)', padding: '2rem' }}>
+      <div className="card anim-fade-in-up" style={{ maxWidth: 440, width: '100%', padding: '3rem', textAlign: 'center' }}>
+        <div className="icon-box icon-box-xl" style={{ margin: '0 auto 1.5rem', borderRadius: 20, background: 'rgba(234,179,8,0.1)', color: '#ca8a04' }}>
+          <AlertTriangle size={28} />
+        </div>
+        <h1 style={{ fontWeight: 800, fontSize: '1.5rem', marginBottom: 8, color: 'var(--text-1)' }}>Under Maintenance</h1>
+        <p style={{ color: 'var(--text-2)', marginBottom: '2rem', lineHeight: 1.6 }}>
+          The voting portal is temporarily unavailable for maintenance. Please try again later.
+        </p>
+        <button className="btn btn-outline btn-full" onClick={() => navigate('/')}>Return Home</button>
+      </div>
+    </div>
+  );
 
   /* ── Loading ── */
   if (loading) return (

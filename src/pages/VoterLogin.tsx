@@ -1,7 +1,11 @@
 import React, { useState } from 'react';
 import { supabase } from '../lib/supabase';
-import { User, KeyRound, ArrowRight, Loader2, ShieldCheck, Zap, Lock } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { User, KeyRound, ArrowRight, Loader2, ShieldCheck, Zap, Lock, AlertTriangle } from 'lucide-react';
+import { useNavigate, useLocation } from 'react-router-dom';
+
+const getSettings = () => {
+  try { return JSON.parse(localStorage.getItem('syncra_settings') || '{}'); } catch { return {}; }
+};
 
 const VoterLogin: React.FC = () => {
   const [identifier, setIdentifier] = useState('');
@@ -9,14 +13,19 @@ const VoterLogin: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const navigate = useNavigate();
+  const location = useLocation();
+  const electionId = (location.state as any)?.electionId as string | undefined;
+  const settings = getSettings();
+  const maintenanceMode = settings.maintenanceMode === true;
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
     setError('');
     try {
-      const { data, error: fetchError } = await supabase
-        .from('voters').select('*').eq('identifier', identifier).eq('otp', otp).single();
+      let query = supabase.from('voters').select('*').eq('identifier', identifier).eq('otp', otp);
+      if (electionId) query = query.eq('election_id', electionId);
+      const { data, error: fetchError } = await query.single();
       if (fetchError || !data) throw new Error('Invalid credentials. Please check your ID and OTP.');
       if (data.voted) throw new Error('You have already submitted your vote for this election.');
       localStorage.setItem('syncra_voter_id', data.id);
@@ -28,6 +37,23 @@ const VoterLogin: React.FC = () => {
       setLoading(false);
     }
   };
+
+  if (maintenanceMode) {
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: 'calc(100dvh - 56px)', padding: '2rem' }}>
+        <div className="card anim-fade-in-up" style={{ maxWidth: 440, width: '100%', padding: '3rem', textAlign: 'center' }}>
+          <div className="icon-box icon-box-xl" style={{ margin: '0 auto 1.5rem', borderRadius: 20, background: 'rgba(234,179,8,0.1)', color: '#ca8a04' }}>
+            <AlertTriangle size={28} />
+          </div>
+          <h1 style={{ fontWeight: 800, fontSize: '1.5rem', marginBottom: 8, color: 'var(--text-1)' }}>Under Maintenance</h1>
+          <p style={{ color: 'var(--text-2)', marginBottom: '2rem', lineHeight: 1.6 }}>
+            The voting portal is temporarily unavailable for maintenance. Please try again later or contact your administrator.
+          </p>
+          <button className="btn btn-outline btn-full" onClick={() => navigate('/')}>Return Home</button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div style={{

@@ -6,6 +6,21 @@ import {
 } from 'lucide-react';
 import type { Voter } from '../types';
 
+const getOtpLength = (): number => {
+  try {
+    const s = JSON.parse(localStorage.getItem('syncra_settings') || '{}');
+    const len = parseInt(s.otpLength || '6', 10);
+    return [4, 6, 8].includes(len) ? len : 6;
+  } catch { return 6; }
+};
+
+const generateOtp = () => {
+  const len = getOtpLength();
+  const min = Math.pow(10, len - 1);
+  const max = Math.pow(10, len) - 1;
+  return Math.floor(min + Math.random() * (max - min + 1)).toString();
+};
+
 /* ── Sample CSV template ── */
 const SAMPLE_CSV = `name,identifier,phone,class
 Kwame Mensah,UCC/2024/001,+233241234567,Level 300
@@ -43,7 +58,7 @@ const VoterManagement: React.FC<{ electionId: string }> = ({ electionId }) => {
 
   const handleAdd = async (e: React.FormEvent) => {
     e.preventDefault();
-    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const otp = generateOtp();
     const { data } = await supabase
       .from('voters')
       .insert([{ ...newVoter, election_id: electionId, otp, otp_sent: false }])
@@ -73,7 +88,7 @@ const VoterManagement: React.FC<{ electionId: string }> = ({ electionId }) => {
       const headers = lines[0].split(',').map(h => h.trim().toLowerCase());
       const batch = lines.slice(1).map(line => {
         const vals = line.split(',').map(v => v.trim());
-        const v: any = { election_id: electionId, otp: Math.floor(100000 + Math.random() * 900000).toString(), otp_sent: false };
+        const v: any = { election_id: electionId, otp: generateOtp(), otp_sent: false };
         headers.forEach((h, i) => {
           if (h.includes('name')) v.name = vals[i];
           if (h.includes('id') || h.includes('index') || h.includes('staff')) v.identifier = vals[i];

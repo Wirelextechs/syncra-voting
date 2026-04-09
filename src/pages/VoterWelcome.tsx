@@ -66,7 +66,7 @@ const VoterWelcome: React.FC = () => {
             {election.title}
           </p>
           <button
-            onClick={() => navigate('/voter/login')}
+            onClick={() => navigate('/voter/login', { state: { electionId: id } })}
             style={{
               display: 'inline-flex',
               alignItems: 'center',
