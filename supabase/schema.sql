@@ -71,6 +71,28 @@ create policy "allow_all_candidates" on candidates for all using (true) with che
 create policy "allow_all_voters"     on voters     for all using (true) with check (true);
 create policy "allow_all_votes"      on votes      for all using (true) with check (true);
 
+-- Platform config (server-side feature flags)
+create table if not exists platform_config (
+  key text primary key,
+  value jsonb not null,
+  updated_at timestamptz default now()
+);
+alter table platform_config enable row level security;
+create policy "allow_all_platform_config" on platform_config for all using (true) with check (true);
+insert into platform_config (key, value) values ('signups_enabled', 'true') on conflict (key) do nothing;
+
+-- Admin accounts (approval tracking)
+create table if not exists admin_accounts (
+  id uuid default gen_random_uuid() primary key,
+  auth_user_id uuid not null unique,
+  email text not null,
+  status text default 'pending' check (status in ('pending', 'approved', 'rejected')),
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
+);
+alter table admin_accounts enable row level security;
+create policy "allow_all_admin_accounts" on admin_accounts for all using (true) with check (true);
+
 -- Function to safely increment candidate votes
 create or replace function increment_candidate_votes(candidate_uuid uuid)
 returns void
