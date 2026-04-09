@@ -5,7 +5,7 @@ import {
   Building2, Calendar, ChevronRight, BarChart3,
   Settings, Play, Square, TrendingUp, Share2,
   Copy, CheckCheck, Zap, PlusCircle, X, Loader2, AlertCircle,
-  Trash2, UploadCloud, Camera
+  Trash2, UploadCloud, Camera, RotateCcw
 } from 'lucide-react';
 import type { Election } from '../types';
 import {
@@ -22,6 +22,15 @@ const MOCK_DATA = [
   { name: 'Candidate C', votes: 180 },
   { name: 'Candidate D', votes: 95 },
 ];
+
+/* ── OTP helper (matches VoterManagement logic) ── */
+const getOtpLength = () => {
+  try { const s = JSON.parse(localStorage.getItem('syncra_settings') || '{}'); const l = parseInt(s.otpLength || '6', 10); return [4, 6, 8].includes(l) ? l : 6; } catch { return 6; }
+};
+const generateOtp = () => {
+  const len = getOtpLength(); const min = Math.pow(10, len - 1); const max = Math.pow(10, len) - 1;
+  return Math.floor(min + Math.random() * (max - min + 1)).toString();
+};
 
 /* ── Logo upload helper ── */
 const uploadLogo = async (file: File, electionHint: string): Promise<string> => {
@@ -65,6 +74,10 @@ const AdminDashboard: React.FC = () => {
   // Delete state
   const [showDeleteConfirm, setShowDeleteConfirm] = useState<Election | null>(null);
   const [deleting, setDeleting] = useState(false);
+
+  // Reset state
+  const [showResetConfirm, setShowResetConfirm] = useState(false);
+  const [resetting, setResetting] = useState(false);
 
   const toLocalDatetimeValue = (offset: number = 0) => {
     const d = new Date(Date.now() + offset);
@@ -238,6 +251,59 @@ const AdminDashboard: React.FC = () => {
     }
     setDeleting(false);
     setShowDeleteConfirm(null);
+  };
+
+  /* ── Reset election ── */
+  const handleResetElection = async () => {
+    if (!activeElection) return;
+    setResetting(true);
+    const id = activeElection.id;
+    try {
+      // 1. Get all voter IDs for this election
+      const { data: voterRows } = await supabase
+        .from('voters').select('id').eq('election_id', id);
+      const voterIds = (voterRows || []).map((v: any) => v.id);
+
+      // 2. Delete all cast votes
+      if (voterIds.length) {
+        await supabase.from('votes').delete().in('voter_id', voterIds);
+      }
+
+      // 3. Reset candidate vote counts to 0
+      const { data: catRows } = await supabase
+        .from('categories').select('id').eq('election_id', id);
+      if (catRows?.length) {
+        await supabase.from('candidates')
+          .update({ votes_count: 0 })
+          .in('category_id', catRows.map((c: any) => c.id));
+      }
+
+      // 4. Regenerate OTPs and reset voter flags
+      if (voterIds.length) {
+        await Promise.all(
+          voterIds.map(vid =>
+            supabase.from('voters')
+              .update({ voted: false, otp_sent: false, otp: generateOtp() })
+              .eq('id', vid)
+          )
+        );
+      }
+
+      // 5. Reset election status back to draft
+      const { data: updated } = await supabase
+        .from('elections')
+        .update({ status: 'draft', start_time: null, end_time: null })
+        .eq('id', id).select().single();
+
+      if (updated) {
+        setActiveElection(updated);
+        setElections(prev => prev.map(e => e.id === updated.id ? updated : e));
+      }
+      await Promise.all([fetchStats(), fetchChartData(true)]);
+    } finally {
+      setResetting(false);
+      setShowResetConfirm(false);
+    }
   };
 
   const copyLink = () => {
@@ -534,6 +600,21 @@ const AdminDashboard: React.FC = () => {
                   </button>
                 </div>
               )}
+
+              {/* Reset divider + button — always visible */}
+              <div style={{ marginTop: '0.75rem', paddingTop: '0.75rem', borderTop: '1px solid var(--border)' }}>
+                <button
+                  className="btn btn-full btn-sm"
+                  style={{ border: '1px solid #fed7aa', background: '#fff7ed', color: '#c2410c', gap: 6 }}
+                  onClick={() => setShowResetConfirm(true)}
+                  disabled={resetting}
+                >
+                  <RotateCcw size={13} /> Reset Election
+                </button>
+                <p style={{ marginTop: 5, fontSize: '0.7rem', color: 'var(--text-3)', textAlign: 'center', lineHeight: 1.4 }}>
+                  Clears votes &amp; OTPs. Keeps voters, positions &amp; candidates.
+                </p>
+              </div>
             </div>
 
             <div className="card" style={{ padding: '1.25rem' }}>
@@ -854,6 +935,67 @@ const AdminDashboard: React.FC = () => {
                 disabled={deleting}
               >
                 {deleting ? <><Loader2 size={15} className="anim-spin" /> Deleting…</> : <><Trash2 size={15} /> Yes, Delete Election</>}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ═══════════════════ RESET CONFIRMATION ══════════════ */}
+      {showResetConfirm && (
+        <div className="modal-overlay" onClick={() => !resetting && setShowResetConfirm(false)}>
+          <div className="modal" style={{ maxWidth: 480 }} onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                <div style={{ width: 44, height: 44, borderRadius: 12, background: '#fff7ed', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                  <RotateCcw size={20} style={{ color: '#c2410c' }} />
+                </div>
+                <div>
+                  <h2 style={{ fontWeight: 700, fontSize: '1.125rem', color: 'var(--text-1)' }}>Reset Election</h2>
+                  <p style={{ fontSize: '0.8125rem', color: 'var(--text-2)' }}>Start fresh without rebuilding from scratch</p>
+                </div>
+              </div>
+              <button className="btn btn-icon btn-ghost" onClick={() => setShowResetConfirm(false)} disabled={resetting}><X size={18} /></button>
+            </div>
+
+            <div className="modal-body" style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+              {/* What will be reset */}
+              <div style={{ padding: '0.875rem 1rem', borderRadius: 10, background: '#fff7ed', border: '1px solid #fed7aa' }}>
+                <p style={{ fontSize: '0.875rem', color: '#c2410c', fontWeight: 600, marginBottom: 6 }}>The following will be cleared:</p>
+                <ul style={{ fontSize: '0.8125rem', color: '#c2410c', paddingLeft: '1.25rem', margin: 0, lineHeight: 2 }}>
+                  <li>All cast votes and vote tallies</li>
+                  <li>All candidate vote counts (reset to 0)</li>
+                  <li>All voter OTPs (new ones will be generated)</li>
+                  <li>OTP sent status for all voters</li>
+                  <li>Election status, start &amp; end time (back to Draft)</li>
+                </ul>
+              </div>
+
+              {/* What is kept */}
+              <div style={{ padding: '0.875rem 1rem', borderRadius: 10, background: 'rgba(22,163,74,0.05)', border: '1px solid rgba(22,163,74,0.2)' }}>
+                <p style={{ fontSize: '0.875rem', color: '#16a34a', fontWeight: 600, marginBottom: 6 }}>The following will be kept intact:</p>
+                <ul style={{ fontSize: '0.8125rem', color: '#16a34a', paddingLeft: '1.25rem', margin: 0, lineHeight: 2 }}>
+                  <li>All registered voters (names, IDs, phone numbers)</li>
+                  <li>All positions (categories) and their candidates</li>
+                </ul>
+              </div>
+
+              <p style={{ fontSize: '0.8125rem', color: 'var(--text-3)', lineHeight: 1.55 }}>
+                After resetting, you can re-send the new OTPs to voters and start the election again on a fresh schedule.
+              </p>
+            </div>
+
+            <div className="modal-footer">
+              <button className="btn btn-outline btn-full" onClick={() => setShowResetConfirm(false)} disabled={resetting}>Cancel</button>
+              <button
+                className="btn btn-full"
+                style={{ background: '#c2410c', color: 'white', border: 'none' }}
+                onClick={handleResetElection}
+                disabled={resetting}
+              >
+                {resetting
+                  ? <><Loader2 size={15} className="anim-spin" /> Resetting…</>
+                  : <><RotateCcw size={15} /> Yes, Reset Election</>}
               </button>
             </div>
           </div>
