@@ -7,6 +7,7 @@ export interface Election {
   status: ElectionStatus;
   start_time?: string;
   end_time?: string;
+  logo_url?: string;
   created_at: string;
 }
 

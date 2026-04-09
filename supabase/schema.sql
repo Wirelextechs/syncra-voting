@@ -11,6 +11,7 @@ create table elections (
   status text default 'draft' check (status in ('draft', 'open', 'closed')),
   start_time timestamp with time zone,
   end_time timestamp with time zone,
+  logo_url text,
   created_at timestamp with time zone default now()
 );
 
