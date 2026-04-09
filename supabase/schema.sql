@@ -57,6 +57,19 @@ create table votes (
 -- Enable Real-time for live results
 alter publication supabase_realtime add table candidates, elections, voters;
 
+-- Row Level Security: grant full access to anon key (no auth in this app)
+alter table elections  enable row level security;
+alter table categories enable row level security;
+alter table candidates enable row level security;
+alter table voters     enable row level security;
+alter table votes      enable row level security;
+
+create policy "allow_all_elections"  on elections  for all using (true) with check (true);
+create policy "allow_all_categories" on categories for all using (true) with check (true);
+create policy "allow_all_candidates" on candidates for all using (true) with check (true);
+create policy "allow_all_voters"     on voters     for all using (true) with check (true);
+create policy "allow_all_votes"      on votes      for all using (true) with check (true);
+
 -- Function to safely increment candidate votes
 create or replace function increment_candidate_votes(candidate_uuid uuid)
 returns void
