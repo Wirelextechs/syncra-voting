@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
-import { CheckCircle2, ArrowRight, ArrowLeft, Send, ShieldCheck, Loader2, User, AlertTriangle } from 'lucide-react';
+import { CheckCircle2, ArrowRight, ArrowLeft, Send, ShieldCheck, Loader2, User, AlertTriangle, Vote, UserCheck } from 'lucide-react';
 import type { Category, Candidate, Voter } from '../types';
 
 const getSettings = () => {
@@ -17,6 +17,8 @@ const VotePage: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [completed, setCompleted] = useState(false);
+  // 'welcome' → personalised greeting; 'voting' → ballot
+  const [phase, setPhase] = useState<'welcome' | 'voting'>('welcome');
   const navigate = useNavigate();
   const settings = getSettings();
   const maintenanceMode = settings.maintenanceMode === true;
@@ -111,6 +113,62 @@ const VotePage: React.FC = () => {
   const isLast = currentIndex === categories.length - 1;
   const progress = categories.length > 0 ? ((currentIndex + 1) / categories.length) * 100 : 0;
 
+  /* ── Welcome screen ── */
+  if (!loading && !completed && phase === 'welcome' && voter) return (
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: 'calc(100dvh - 56px)', padding: '1.5rem', background: 'var(--bg)' }}>
+      <div className="card anim-scale-in" style={{ maxWidth: 480, width: '100%', padding: '3rem 2.5rem', textAlign: 'center' }}>
+        {/* Avatar circle */}
+        <div style={{
+          width: 88, height: 88, borderRadius: '50%',
+          background: 'linear-gradient(135deg, var(--primary) 0%, #fb923c 100%)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          margin: '0 auto 1.75rem',
+          boxShadow: '0 8px 32px rgba(249,115,22,0.3)',
+        }}>
+          <User size={38} style={{ color: '#fff' }} />
+        </div>
+
+        {/* Greeting */}
+        <p style={{ fontSize: '0.9375rem', color: 'var(--text-3)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 8 }}>Welcome back</p>
+        <h1 style={{ fontSize: 'clamp(1.5rem, 5vw, 2rem)', fontWeight: 900, color: 'var(--text-1)', lineHeight: 1.2, marginBottom: '0.5rem' }}>
+          {voter.name}
+        </h1>
+        <p style={{ fontSize: '0.875rem', color: 'var(--text-2)', marginBottom: '2rem', lineHeight: 1.55 }}>
+          You are verified and ready to cast your ballot.<br />
+          <span style={{ fontFamily: 'monospace', background: 'var(--surface-2)', padding: '0.125rem 0.5rem', borderRadius: 6, fontSize: '0.8125rem', color: 'var(--text-3)' }}>
+            ID: {voter.identifier}
+          </span>
+        </p>
+
+        {/* Trust badges */}
+        <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'center', gap: 8, marginBottom: '2rem' }}>
+          {[
+            { icon: <ShieldCheck size={13} />, label: 'Identity Verified' },
+            { icon: <UserCheck size={13} />, label: 'Account Confirmed' },
+            { icon: <Vote size={13} />, label: `${categories.length} Position${categories.length !== 1 ? 's' : ''} to Vote` },
+          ].map(b => (
+            <span key={b.label} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '0.375rem 0.75rem', borderRadius: 999, background: 'var(--surface-2)', border: '1px solid var(--border)', fontSize: '0.8125rem', color: 'var(--text-2)', fontWeight: 500 }}>
+              {b.icon} {b.label}
+            </span>
+          ))}
+        </div>
+
+        <button
+          className="btn btn-primary btn-xl btn-full"
+          style={{ borderRadius: 14 }}
+          onClick={() => setPhase('voting')}
+        >
+          Start Voting <ArrowRight size={18} />
+        </button>
+
+        <p style={{ marginTop: '1.25rem', fontSize: '0.8rem', color: 'var(--text-3)', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5 }}>
+          <ShieldCheck size={12} style={{ color: '#16a34a' }} />
+          Your vote is anonymous and encrypted
+        </p>
+      </div>
+    </div>
+  );
+
   /* ── Ballot ── */
   return (
     <div style={{ minHeight: 'calc(100dvh - 56px)', display: 'flex', flexDirection: 'column' }}>
@@ -122,7 +180,18 @@ const VotePage: React.FC = () => {
               <p style={{ fontWeight: 700, fontSize: '1rem', color: 'var(--text-1)' }}>{cat?.name}</p>
               <p style={{ fontSize: '0.8125rem', color: 'var(--text-2)', marginTop: 2 }}>Position {currentIndex + 1} of {categories.length}</p>
             </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+              {voter && (
+                <span style={{
+                  display: 'inline-flex', alignItems: 'center', gap: 5,
+                  padding: '0.3rem 0.75rem', borderRadius: 999,
+                  background: 'linear-gradient(135deg, rgba(249,115,22,0.1) 0%, rgba(251,146,60,0.08) 100%)',
+                  border: '1px solid rgba(249,115,22,0.25)',
+                  fontSize: '0.8125rem', fontWeight: 600, color: 'var(--primary)',
+                }}>
+                  <User size={12} /> {voter.name}
+                </span>
+              )}
               <span className="badge badge-violet">
                 <ShieldCheck size={12} /> Secure Ballot
               </span>
